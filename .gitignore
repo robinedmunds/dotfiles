@@ -1,0 +1,33 @@
+# Never commit these. See ADR 0002: this repository installs no packages, but
+# it also never asks you to hand one to it.
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+id_rsa*
+id_ecdsa*
+id_ed25519*
+id_dsa*
+*.kdbx
+*.agekey
+
+# Environment and secret files
+.env
+.env.*
+secrets/
+
+# Public keys are safe and often useful to keep alongside their config.
+!*.pub
+
+# Agent tooling that lives in this workspace but is not part of the dotfiles
+.agents/
+skills-lock.json
+
+# Editor and merge leftovers
+*~
+*.swp
+*.swo
+*.orig
+*.rej
+.DS_Store

@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+#
+# Refuse commits that contain what look like secrets.
+#
+# Scans the contents of files staged for addition or modification. Nothing is
+# ever sent anywhere; this is a local grep. Bypass with `git commit --no-verify`
+# when a pattern fires on something that is not actually a secret.
+
+set -uo pipefail
+
+readonly PROG='pre-commit'
+
+fail() {
+	printf '\n%s: refusing this commit.\n\n' "$PROG" >&2
+	printf '  %s\n' "$1" >&2
+	printf '\nSomething that looks like a secret is staged. Unstage it with\n' >&2
+	printf '  git restore --staged <file>\n\n' >&2
+	printf 'If this is a false positive, commit with --no-verify.\n\n' >&2
+}
+
+# label|extended regex
+#
+# The credential-assignment pattern deliberately requires a value that could
+# plausibly be a secret. A looser "keyword followed by =" rule matches ordinary
+# configuration like `api_key_file=/run/secrets/key` or `# token is set below`,
+# and a guardrail that cries wolf is one that gets switched off. Quoted values
+# may contain anything; unquoted ones may not contain a slash, which is what
+# separates a secret from a path to one.
+readonly PATTERNS=(
+	'private key|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+	'aws access key id|AKIA[0-9A-Z]{16}'
+	'github token|gh[pousr]_[A-Za-z0-9]{20,}'
+	'slack token|xox[baprs]-[A-Za-z0-9-]{10,}'
+	"credential assignment|(api[_-]?key|secret|token|password|passwd|pwd)[A-Za-z0-9_-]*[[:space:]]*[:=][[:space:]]*(\"[^\"]{8,}\"|'[^']{8,}'|[^[:space:]'\"/]{8,})"
+)
+
+found_any=0
+
+while IFS= read -r -d '' file; do
+	# Only files git considers text; skip binaries outright.
+	if ! git cat-file -p ":$file" 2>/dev/null | grep -Iq .; then
+		continue
+	fi
+
+	for entry in "${PATTERNS[@]}"; do
+		label=${entry%%|*}
+		regex=${entry#*|}
+
+		if match=$(git cat-file -p ":$file" 2>/dev/null | grep -IaEm1 -- "$regex"); then
+			printf '%s: %s looks like a %s\n' "$PROG" "$file" "$label" >&2
+			printf '    %s\n' "${match:0:120}" >&2
+			found_any=1
+		fi
+	done
+done < <(git diff --cached --name-only --diff-filter=AM -z)
+
+if ((found_any)); then
+	fail 'Refusing to commit what appears to be a secret.'
+	exit 1
+fi
+
+exit 0
