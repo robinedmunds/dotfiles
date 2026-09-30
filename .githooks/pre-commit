@@ -20,18 +20,17 @@ fail() {
 
 # label|extended regex
 #
-# The credential-assignment pattern deliberately requires a value that could
-# plausibly be a secret. A looser "keyword followed by =" rule matches ordinary
-# configuration like `api_key_file=/run/secrets/key` or `# token is set below`,
-# and a guardrail that cries wolf is one that gets switched off. Quoted values
-# may contain anything; unquoted ones may not contain a slash, which is what
+# Note on the credential pattern: POSIX ERE does not backtrack, so a greedy
+# class between the keyword and the "=" would swallow the "=" and never match.
+# The suffix is therefore restricted to word characters. Quoted values may
+# contain anything; unquoted ones may not contain a slash, which is what
 # separates a secret from a path to one.
 readonly PATTERNS=(
 	'private key|-----BEGIN [A-Z ]*PRIVATE KEY-----'
 	'aws access key id|AKIA[0-9A-Z]{16}'
 	'github token|gh[pousr]_[A-Za-z0-9]{20,}'
 	'slack token|xox[baprs]-[A-Za-z0-9-]{10,}'
-	"credential assignment|(api[_-]?key|secret|token|password|passwd|pwd)[A-Za-z0-9_-]*[[:space:]]*[:=][[:space:]]*(\"[^\"]{8,}\"|'[^']{8,}'|[^[:space:]'\"/]{8,})"
+	"credential assignment|(api[_-]?key|secret|token|password|passwd|pwd)[[:alnum:]_-]*[[:space:]]*[:=][[:space:]]*(\"[^\"]{8,}\"|'[^']{8,}'|[^[:space:]'\"/]{8,})"
 )
 
 found_any=0
