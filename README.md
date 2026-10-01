@@ -93,10 +93,22 @@ git config core.hooksPath .githooks
 `.githooks/` is a normal tracked directory, so the hook is present and working
 after a fresh clone. Bypass a false positive with `git commit --no-verify`.
 
+## Tests
+
+```sh
+./tests/run.sh
+```
+
+295 assertions over a throwaway Home in a throwaway sandbox; your real files
+are never in scope. Plain bash, plus python3 for the cases that need a real
+terminal. Without python3 those cases skip and say so. See
+[tests/README.md](tests/README.md).
+
 ## Documentation
 
 - [GLOSSARY.md](GLOSSARY.md) — the vocabulary this project uses
 - [docs/adr/](docs/adr/) — why things work the way they do
+- [tests/README.md](tests/README.md) — how install.sh is tested
 
 | ADR | Decision |
 |---|---|
