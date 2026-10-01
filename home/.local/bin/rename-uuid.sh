@@ -1,94 +1,106 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# Rename files to random UUIDs, keeping their extensions.
+#
+# Files already named with a UUID are left alone, so running it twice is not
+# destructive. Run it with --dry-run first.
 
-# Default values
-TARGET_DIR="."
-RECURSIVE=false
-UUID_REGEX="^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+set -euo pipefail
+
+RL_LIB_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+if [[ ! -r $RL_LIB_DIR/rename-lib.sh ]]; then
+	printf '%s: cannot find rename-lib.sh next to %s\n' \
+		"$(basename -- "$0")" >&2
+	exit 1
+fi
+# shellcheck source=rename-lib.sh
+source "$RL_LIB_DIR/rename-lib.sh"
+
+RL_PROG=$(basename -- "$0")
 
 usage() {
-    echo "Usage: $(basename "$0") [OPTIONS] [DIRECTORY]"
-    echo
-    echo "Renames files in a directory to random UUIDs while preserving extensions."
-    echo "Skips files that are already named with a valid UUID."
-    echo
-    echo "Options:"
-    echo "  -r, --recursive  Search subdirectories recursively."
-    echo "  -h, --help       Display this help message."
-    echo
-    echo "Arguments:"
-    echo "  DIRECTORY        The directory to process (defaults to current directory)."
-    exit 1
+	cat <<-EOF
+		Usage: $RL_PROG [OPTIONS] [DIRECTORY]
+
+		Rename every file in DIRECTORY to a fresh lowercase UUID, keeping its
+		extension. DIRECTORY defaults to the current directory.
+
+		Files already named with a UUID are skipped, so the tool can be run
+		repeatedly without renaming everything again.
+
+		Symlinks are skipped: they are not files, and renaming one would leave
+		its target under the old name.
+
+	$(rl_help_options)
+
+		Examples:
+		  # See what would change, without changing it
+		  $RL_PROG --dry-run
+
+		  # Recurse, and record every rename so the run can be reversed
+		  $RL_PROG --recursive --undo-log /tmp/renames.tsv
+
+		  # Rename inside a directory
+		  $RL_PROG ~/Downloads
+	EOF
 }
 
-# Parse options
-while [[ "$#" -gt 0 ]]; do
-    case "$1" in
-    -r | --recursive)
-        RECURSIVE=true
-        shift
-        ;;
-    -h | --help)
-        usage
-        ;;
-    -*)
-        echo "Unknown option: $1"
-        usage
-        ;;
-    *)
-        TARGET_DIR="$1"
-        shift
-        ;;
-    esac
-done
-
-# Ensure target directory exists
-if [[ ! -d "$TARGET_DIR" ]]; then
-    echo "Error: Directory '$TARGET_DIR' does not exist."
-    exit 1
+if rl_wants_help "$@"; then
+	if (( RL_WANTS_VERSION )); then
+		printf '%s %s\n' "$RL_PROG" "$RL_VERSION"
+	else
+		usage
+	fi
+	exit 0
 fi
 
-# Ensure uuidgen is installed
-if ! command -v uuidgen &>/dev/null; then
-    echo "Error: uuidgen is not installed. Please install it and try again."
-    exit 1
+rl_getopts "$@"
+
+# The directory may still arrive positionally, the way it always has. An
+# explicit --directory wins, and passing both is a mistake worth reporting.
+if (( ${#RL_ARGS[@]} > 1 )); then
+	usage >&2
+	rl_die "expected at most one directory, got ${#RL_ARGS[@]}"
+fi
+if (( ${#RL_ARGS[@]} == 1 )) && [[ $RL_ROOT == "." ]]; then
+	RL_ROOT=${RL_ARGS[0]}
 fi
 
-# Set find depth based on recursive flag
-# -maxdepth 1 means current directory only
-FIND_OPTS=""
-if [[ "$RECURSIVE" = false ]]; then
-    FIND_OPTS="-maxdepth 1"
+if [[ ! -d $RL_ROOT ]]; then
+	rl_die "not a directory: $RL_ROOT"
 fi
 
-# Find files and process them
-find "$TARGET_DIR" $FIND_OPTS -type f | while read -r FILE_PATH; do
-    DIR=$(dirname "$FILE_PATH")
-    FILENAME=$(basename "$FILE_PATH")
-    EXT="${FILENAME##*.}"
-    BASE="${FILENAME%.*}"
+# Matches a bare UUID stem, with or without a leading dot and in any case.
+readonly UUID_STEM='^.*\.?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 
-    # Handle files with no extension
-    if [[ "$FILENAME" == "$BASE" ]]; then
-        EXT=""
-    fi
+rl_counters_reset
+rl_depth_args
+rl_prompt_ready
 
-    # Check if the current filename (without extension) is already a UUID
-    if [[ ${BASE,,} =~ $UUID_REGEX ]]; then
-        continue
-    fi
+# -print0 with `read -d ''`, not `read`. The previous version piped `find` into
+# a plain `read`, which split a filename containing a newline into two
+# nonexistent paths and renamed neither.
+while IFS= read -r -d '' file; do
+	# find prints ./name when it is given "."; drop it so the name
+	# being renamed and the name being renamed to look the same.
+	file=${file#./}
 
-    # Generate a new lowercase UUID
-    NEW_UUID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+	rl_split_name "$file"
 
-    # Construct the new filename
-    if [[ -n "$EXT" && "$FILENAME" != "$EXT" ]]; then
-        NEW_FILENAME="${NEW_UUID}.${EXT}"
-    else
-        NEW_FILENAME="$NEW_UUID"
-    fi
+	# ${RL_STEM,,} so an uppercase UUID counts as one too.
+	if [[ ${RL_STEM,,} =~ $UUID_STEM ]]; then
+		continue
+	fi
 
-    # Perform the rename
-    if mv -n "$FILE_PATH" "$DIR/$NEW_FILENAME"; then
-        echo "Renamed: $FILENAME -> $NEW_FILENAME"
-    fi
-done
+	target="$(rl_join_ext "$(rl_uuid)" "$RL_EXT")"
+	if [[ -n $RL_DIR ]]; then
+		target="$RL_DIR/$target"
+	fi
+
+	rl_rename "$file" "$target"
+done < <(find "$RL_ROOT" ${RL_DEPTH[@]+"${RL_DEPTH[@]}"} -type f -print0)
+
+status=$RL_EX_OK
+rl_summary || status=$?
+rl_log_reverse_hint
+exit "$status"

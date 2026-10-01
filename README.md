@@ -99,7 +99,7 @@ after a fresh clone. Bypass a false positive with `git commit --no-verify`.
 ./tests/run.sh
 ```
 
-295 assertions over a throwaway Home in a throwaway sandbox; your real files
+296 assertions over a throwaway Home in a throwaway sandbox; your real files
 are never in scope. Plain bash, plus python3 for the cases that need a real
 terminal. Without python3 those cases skip and say so. See
 [tests/README.md](tests/README.md).
