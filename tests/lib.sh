@@ -38,6 +38,7 @@ REPO=
 HOME_DIR=
 SCRATCH=
 INSTALL_SH_UNDER_TEST=
+HOME_BEFORE=
 OUTSIDE_BEFORE=
 
 # ---------------------------------------------------------------------------
@@ -192,6 +193,8 @@ home_link() {
 # stops a suite run from a developer's terminal behaving differently from one
 # run in CI.
 run_cmd() {
+	freeze_snapshots
+	mark_run
 	stdout=$("$@" </dev/null 2>"$SCRATCH/stderr")
 	rc=$?
 	stderr=$(cat "$SCRATCH/stderr")
@@ -225,6 +228,8 @@ pty_run() {
 		return 1
 	fi
 
+	freeze_snapshots
+	mark_run
 	stdout=$(env HOME="$HOME_DIR" LC_ALL=C python3 "$TESTS_DIR/drive_prompts.py" \
 		"$keys" -- "$INSTALL_SH_UNDER_TEST" "$@" 2>"$SCRATCH/pty.err")
 	rc=$?
@@ -243,22 +248,175 @@ pty_run() {
 # Snapshots
 # ---------------------------------------------------------------------------
 
+# Modification time, in the best format this platform's stat can actually
+# render.
+#
+# GNU stat understands %T@ and gives fractional seconds. BusyBox accepts the
+# same format string and prints the literal text "0@", so it does not fail --
+# it reports the same value for every file, which is precisely the rewrite this
+# snapshot exists to detect. The format is probed once, against a pattern the
+# real output has to match, so an implementation that merely tolerates the
+# format is caught rather than trusted.
+SNAPSHOT_MTIME_FORMAT=
+init_snapshot_mtime_format() {
+	local value
+	if value=$(stat -c '%T@' -- . 2>/dev/null) &&
+		[[ $value =~ ^[0-9]+\.[0-9]+$ ]]; then
+		SNAPSHOT_MTIME_FORMAT='%T@'
+	else
+		SNAPSHOT_MTIME_FORMAT='%Y'
+	fi
+}
+
+snapshot_mtime() {
+	stat -c "$SNAPSHOT_MTIME_FORMAT" -- "$1" 2>/dev/null || printf 'unknown'
+}
+
+# One snapshot line for PATH: the path, its type, mode, size and modification
+# time. The type is derived rather than asked for, because %y is a find -printf
+# extension and the format strings of stat -c %F differ between implementations.
+snapshot_line() {
+	local path=$1
+	local type
+	if [[ -L $path ]]; then
+		type=l
+	elif [[ -d $path ]]; then
+		type=d
+	else
+		type=f
+	fi
+	printf '%s|%s|%s|%s|%s\n' "$path" "$type" \
+		"$(stat -c '%a' -- "$path" 2>/dev/null || printf 'unknown')" \
+		"$(stat -c '%s' -- "$path" 2>/dev/null || printf 'unknown')" \
+		"$(snapshot_mtime "$path")"
+}
+
 # Every path under DIR with its type, mode, size and modification time.
 # Modification time is included so that a run which rewrites a file with
 # identical bytes still shows up as a change.
+#
+# Traversal is `find -print0` plus stat, not `find -printf`: -printf is a GNU
+# extension, and a find without it prints its usage to stderr and produces no
+# output at all. That empty result is not a harmless degradation -- compared
+# against an empty baseline it reads as "nothing changed", so every assertion
+# built on this function would pass without having looked at anything. Paths are
+# read NUL-delimited because a Managed File may contain a newline in its name
+# (see cases/repository.sh), and sorted NUL-delimited so that the comparison is
+# between two trees in the same order rather than in whatever order find
+# happened to produce.
 snapshot() {
 	local root=${1:-$HOME_DIR}
-	find "$root" -mindepth 1 -printf '%P|%y|%m|%s|%T@\n' 2>/dev/null | sort
+	local path
+	while IFS= read -r -d '' path; do
+		snapshot_line "$path"
+	done < <(find "$root" -mindepth 1 -print0 2>/dev/null | sort -z)
 }
 
 # The same, for everything in the sandbox that is not the fake Home and not
-# this harness's scratch space. Frozen at the end of setup(), so a case can
-# prove it wrote nothing outside Home without bookkeeping of its own.
+# this harness's scratch space. Paths are printed relative to the sandbox.
 snapshot_outside_home() {
-	find "$SANDBOX" -mindepth 1 \
+	local path
+	while IFS= read -r -d '' path; do
+		snapshot_line "${path#"$SANDBOX"/}"
+	done < <(find "$SANDBOX" -mindepth 1 \
 		-path "$HOME_DIR" -prune -o \
 		-path "$SCRATCH" -prune -o \
-		-printf '%P|%y|%m|%s|%T@\n' 2>/dev/null | sort
+		-print0 2>/dev/null | sort -z)
+}
+
+# Freeze both baselines the "nothing was touched" assertions compare against.
+#
+# Frozen here, immediately before the script under test runs, and not at the end
+# of setup(), because a case builds its fixtures after setup() returns:
+# copy_install_script writes into the fixture repository, in_home writes into
+# Home itself, and a case may create a decoy under $SANDBOX/outside before the
+# run. A baseline taken any earlier would count the fixture as the thing that
+# changed, and the assertion would be unanswerable rather than merely strict.
+freeze_snapshots() {
+	init_snapshot_mtime_format
+	HOME_BEFORE=$(snapshot)
+	OUTSIDE_BEFORE=$(snapshot_outside_home)
+	ensure_mtime_resolution
+}
+
+# Make "unchanged" mean unchanged, even where timestamps are only whole seconds.
+#
+# With sub-second modification times, a run that rewrites a file without changing
+# a single byte moves its timestamp and the snapshot catches it. With whole-second
+# timestamps, a rewrite landing in the same second as the write before it is
+# invisible -- the snapshots agree, and the one thing the modification time was
+# put there to catch goes unreported. The fix is to let the clock pass a second
+# boundary before the run, so that anything this run writes is strictly newer
+# than anything the previous run wrote.
+#
+# Only paid when the resolution is actually coarse and the previous run wrote in
+# the current second, which is the only situation in which it can matter. A
+# first run into an empty Home costs nothing.
+ensure_mtime_resolution() {
+	[[ $SNAPSHOT_MTIME_FORMAT == '%T@' ]] && return 0
+	# Only a second or later run can need this, and only those runs pay for it.
+	# A lone run writes only where the content differs or the file is absent --
+	# install.sh compares before it writes and reports equal content as in sync
+	# rather than rewriting it -- so a first run cannot produce a change that
+	# only the modification time would reveal.
+	already_ran || return 0
+	local now
+	now=$(date +%s)
+	printf '%s\n%s\n' "$HOME_BEFORE" "$OUTSIDE_BEFORE" | grep -q "|${now}\$" || return 0
+
+	# Wait only for what is left of the current second, not for a whole one.
+	# EPOCHREALTIME is bash 5 and up; without it a whole second is all that
+	# can be asked for, which costs the suite a second per affected run.
+	local stamp=${EPOCHREALTIME-}
+	local micros=${stamp#*.}
+	if [[ -z $stamp || $micros == "$stamp" ]]; then
+		sleep 1
+		return 0
+	fi
+	local remaining=$((1010 - 10#${micros:0:3}))
+	printf -v sleep_for '%d.%03d' "$((remaining / 1000))" "$((remaining % 1000))"
+	sleep "$sleep_for"
+}
+
+# True once the script under test has been run at least once in this case.
+#
+# Counted in a file rather than a shell variable because a case is allowed to
+# run in a subshell -- `(umask 077 && run --yes)` -- and a variable incremented
+# in a subshell is lost with it.
+already_ran() {
+	[[ -s $SCRATCH/runs-so-far ]]
+}
+
+# Called by run_cmd and pty_run, just before the script under test is executed.
+# Writes a byte rather than nothing: already_ran tests the file for size, and
+# `: >>file` would leave it empty and the count would never rise.
+mark_run() {
+	printf 'x' >>"$SCRATCH/runs-so-far" 2>/dev/null
+}
+
+# Prove the snapshot machinery works before any case is allowed to trust it.
+#
+# The failure this guards against is silent and one-directional: a snapshot
+# function that returns nothing compares equal to an empty baseline, so a broken
+# environment turns "install.sh wrote to the wrong place" into a green run
+# rather than a red one. Refusing to start is the only honest response.
+snapshot_self_check() {
+	local dir line
+	init_snapshot_mtime_format
+	dir=$(mktemp -d) || return 1
+	printf 'probe\n' >"$dir/file" || return 1
+	line=$(snapshot "$dir")
+	rm -rf -- "$dir"
+
+	if [[ $line != *"$dir/file|f|"* ]]; then
+		printf 'tests/lib.sh: the snapshot machinery does not work on this machine.\n' >&2
+		printf '  expected a line naming %s, got:\n' "$dir/file" >&2
+		printf '    %s\n' "${line:-<nothing at all>}" >&2
+		printf '  Every "wrote nothing" assertion would pass without checking\n' >&2
+		printf '  anything, so the suite refuses to run rather than report a false pass.\n' >&2
+		return 1
+	fi
+	return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -420,7 +578,9 @@ assert_exists() {
 	fi
 }
 
-# HOME is byte-for-byte what it was when setup() finished.
+# HOME is byte-for-byte what it was before the last run of the script under test.
+# See ensure_mtime_resolution for what it takes for this to mean unchanged
+# rather than merely unchanged-looking.
 assert_nothing_written() {
 	local what=$1
 	if [[ $(snapshot) == "$HOME_BEFORE" ]]; then
@@ -431,7 +591,7 @@ assert_nothing_written() {
 	fi
 }
 
-# Nothing outside Home changed. Caught by setup(), frozen before any run.
+# Nothing outside Home changed, from the baselines frozen before the run.
 assert_nothing_outside_home() {
 	local what=$1
 	local now
@@ -440,7 +600,8 @@ assert_nothing_outside_home() {
 		ok "$what"
 	else
 		fail "$what -- something outside Home changed"
-		diff <(printf '%s\n' "$OUTSIDE_BEFORE") <(now) | sed 's/^/          /' >&2
+		diff <(printf '%s\n' "$OUTSIDE_BEFORE") <(printf '%s\n' "$now") |
+			sed 's/^/          /' >&2
 	fi
 }
 
@@ -476,11 +637,16 @@ assert_count() {
 
 run_cases() {
 	local i name
+	snapshot_self_check || exit 1
+
 	for ((i = 0; i < ${#CASE_NAMES[@]}; i++)); do
 		name=${CASE_NAMES[i]}
 		CASE_FAILURES=0
 		printf '  %s\n' "$name"
+		# Re-established per case, so a case cannot inherit the previous one's
+		# baseline. freeze_snapshots overwrites both again before each run.
 		HOME_BEFORE=
+		OUTSIDE_BEFORE=
 		"${CASE_FNS[i]}"
 		if ((CASE_FAILURES > 0)); then FAILED_CASES+=("$name"); fi
 	done

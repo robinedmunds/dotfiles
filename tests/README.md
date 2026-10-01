@@ -5,8 +5,9 @@
 ./tests/run.sh symlinks drift  # only case files matching these fragments
 ```
 
-295 assertions in eight files, a few seconds. Plain bash and python3, nothing
-else, and no network.
+296 assertions in eight files, a few seconds. Plain bash and python3, no network.
+It also leans on `find -print0`, `sort -z`, `stat -c` and `date` -- all present in
+GNU coreutils/findutils and in BusyBox, which is the whole of what it asks for.
 
 ## What it does to your files
 
@@ -44,6 +45,23 @@ answer goes to — is locale-dependent. Pinned, it is deterministic.
 snapshot records every path under Home with its type, mode, size and
 modification time. Comparing before and after catches a rewrite that leaves
 identical bytes behind, which checking the log would miss.
+
+**The snapshot has to be able to fail.** An earlier version built the snapshot
+with `find -printf`, a GNU extension. On BusyBox that `find` prints its usage to
+stderr and emits nothing, and an empty snapshot compares equal to an empty
+baseline -- so every "wrote nothing" assertion passed without looking at
+anything. The suite reported 295 green assertions while testing none of that.
+Two things guard against it now: the snapshot is built from `find -print0` plus
+`stat`, which BusyBox has, and `run_cases` refuses to start until it has seen
+the machinery produce a real line for a known file.
+
+**Modification time has to be precise enough to mean something.** Only whole
+seconds are available where `stat` cannot report fractional ones, and a rewrite
+landing in the same second as the write before it is then invisible. Before any
+second or later run, `freeze_snapshots` waits for the second to turn over, so
+that this run's writes are strictly newer than the previous run's. First runs
+skip the wait: a single run only writes where the content differs or the file is
+missing, so it cannot produce a change only the modification time would reveal.
 
 **Driver failures fail the case.** If the pty driver dies, the case fails
 rather than continuing into assertions that are trivially true because the
@@ -97,8 +115,13 @@ case_overwrites_when_told_to() {
 test_case 'the right description, shown in the output' case_overwrites_when_told_to
 ```
 
-`setup` first, always: it makes a new sandbox, points `$HOME` at it and
-freezes the snapshots the "nothing was touched" assertions compare against.
+`setup` first, always: it makes a new sandbox and points `$HOME` at it. The
+snapshots the "nothing was touched" assertions compare against are frozen by
+`run`, not by `setup`, because a case builds its fixtures *after* `setup`
+returns — `copy_install_script` writes into the fixture repository, `in_home`
+writes into Home itself, and a case may create a decoy under `$SANDBOX/outside`
+before the run. A baseline taken any earlier would count the fixture as the
+thing that changed.
 
 Registering a block inline does not work, and cannot be made to:
 
@@ -112,13 +135,21 @@ so cases are named functions.
 ## A suite that can only go green is worthless
 
 Every case here was checked against a deliberately broken `install.sh` to
-confirm it fails. Eleven mutations were tried — removing the refusal to write
+confirm it fails. Twelve mutations were tried — removing the refusal to write
 through a symlinked directory, making `--keep-existing` overwrite, unpruning
 nested `.git`, flattening every mode to 644, returning 0 for a partial run,
-deleting the terminal check, switching from NUL to newline delimiters,
-letting `--dry-run` write, overwriting on end-of-input, not replacing a
-symlink destination, and not checking for `diff`. All eleven were caught, and
-each by the cases that ought to catch it.
+deleting the terminal check, letting `--dry-run` write, overwriting on
+end-of-input, not replacing a symlink destination, not checking for `diff`,
+rewriting every file on every run, and breaking the harness's own snapshot so it
+returns nothing. All twelve were caught, and each by the cases that ought to
+catch it.
+
+That last one is the one worth dwelling on. The other eleven are bugs in
+`install.sh`; the twelfth breaks the measurement rather than the thing measured,
+and it was caught by `snapshot_self_check` refusing to run — which is the only
+reason it is worth having. Before that check existed, that mutation produced a
+fully green run of all 295 assertions, on a machine whose `find` had no
+`-printf`, testing nothing at all.
 
 The checker lives outside the repository, in `/tmp/opencode/mutation-check.py`,
 because it needs a throwaway copy of the whole repository to work in.

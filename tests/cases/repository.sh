@@ -116,6 +116,14 @@ case_empty_and_large_files() {
 	assert_exists 'empty' 'a zero-byte file is installed'
 	assert_content 'big/large' "$(head -c 200000 /dev/zero | tr '\0' 'x')" \
 		'a large file arrives intact'
+
+	# The install above necessarily wrote to Home, so the baseline that
+	# assert_nothing_written compares against has to be taken after it: the
+	# claim is that these two files settle, not that installing them was free.
+	# A script that rewrote both on every run fails here.
+	run --yes
+
+	assert_rc 0 'and the machine is in sync'
 	assert_nothing_written 'and nothing changed afterwards'
 }
 test_case 'empty and large files install correctly' case_empty_and_large_files
