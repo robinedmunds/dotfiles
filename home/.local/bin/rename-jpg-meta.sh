@@ -20,7 +20,7 @@ fi
 # shellcheck source=rename-lib.sh
 source "$RL_LIB_DIR/rename-lib.sh"
 
-RL_PROG=$(basename -- "$0")
+TOOL_PROG=$(basename -- "$0")
 
 # exiv2 tags holding the moment the shutter fired, most specific first.
 readonly DATE_TAGS=(
@@ -38,7 +38,7 @@ RANDOM_SUFFIX=0
 
 usage() {
 	cat <<-EOF
-		Usage: $RL_PROG [OPTIONS]
+		Usage: $TOOL_PROG [OPTIONS]
 
 		Rename each photo to the time it was taken and the camera that took it,
 		as YYYYMMDD-HHMMSS-MODEL.jpg. Both .jpg and .jpeg are found, in any
@@ -49,7 +49,9 @@ usage() {
 		omitted when the file does not carry one. Two photos from the same
 		second with the same camera get _1, _2 and so on appended.
 
-	$(rl_help_options)
+	$(to_help_options)
+
+	$(to_undo_log_note 'one "old<TAB>new" line per rename: the name the file had, then the name it has')
 
 		Tool-specific options:
 		  --random-suffix N   Append N random characters to each name. Off by
@@ -57,16 +59,16 @@ usage() {
 
 		Examples:
 		  # See what would change, without changing it
-		  $RL_PROG --dry-run
+		  $TOOL_PROG --dry-run
 
 		  # Rename one directory of photos, with a way back
-		  $RL_PROG --directory ~/photos --undo-log /tmp/renames.tsv
+		  $TOOL_PROG --directory ~/photos --undo-log /tmp/renames.tsv
 	EOF
 }
 
-if rl_wants_help "$@"; then
-	if (( RL_WANTS_VERSION )); then
-		printf '%s %s\n' "$RL_PROG" "$RL_VERSION"
+if to_wants_help "$@"; then
+	if (( TOOL_WANTS_VERSION )); then
+		printf '%s %s\n' "$TOOL_PROG" "$RL_VERSION"
 	else
 		usage
 	fi
@@ -80,7 +82,7 @@ while (( $# )); do
 	case $1 in
 		--random-suffix)
 			if (( $# < 2 )); then
-				rl_die "--random-suffix needs a number"
+				to_die "--random-suffix needs a number"
 			fi
 			RANDOM_SUFFIX=$2
 			shift 2
@@ -101,25 +103,25 @@ while (( $# )); do
 	esac
 done
 
-rl_getopts ${rl_getopts_args[@]+"${rl_getopts_args[@]}"}
+to_getopts ${rl_getopts_args[@]+"${rl_getopts_args[@]}"}
 
-if (( ${#RL_ARGS[@]} > 0 )); then
+if (( ${#TOOL_ARGS[@]} > 0 )); then
 	usage >&2
-	rl_die "unexpected argument: ${RL_ARGS[0]} (this tool has no positional arguments)"
+	to_die "unexpected argument: ${TOOL_ARGS[0]} (this tool has no positional arguments)"
 fi
 
 case $RANDOM_SUFFIX in
 	'' | *[!0-9]*)
 		usage >&2
-		rl_die "--random-suffix needs a number"
+		to_die "--random-suffix needs a number"
 		;;
 esac
 
-if [[ ! -d $RL_ROOT ]]; then
-	rl_die "not a directory: $RL_ROOT"
+if [[ ! -d $TOOL_ROOT ]]; then
+	to_die "not a directory: $TOOL_ROOT"
 fi
 
-rl_require_cmd exiv2
+to_require_cmd exiv2
 
 # Reduce a tag value to something safe in a filename. Camera models arrive as
 # "Canon EOS 5D Mark IV" and "NIKON D5300 ", which give names with spaces and a
@@ -168,7 +170,7 @@ capture_stamp() {
 	# No usable Exif date. The file's own modification time is deterministic,
 	# which the random characters this replaced were not.
 	local mtime
-	if mtime=$(rl_mtime_stamp "$file"); then
+	if mtime=$(to_mtime_stamp "$file"); then
 		printf '%s' "${mtime//[-_:]/}"
 	fi
 }
@@ -197,8 +199,8 @@ random_suffix() {
 }
 
 rl_counters_reset
-rl_depth_args
-rl_prompt_ready
+to_depth_args
+to_prompt_ready
 
 while IFS= read -r -d '' file; do
 	# find prints ./name when it is given "."; drop it so the name
@@ -209,8 +211,8 @@ while IFS= read -r -d '' file; do
 
 	stamp=$(capture_stamp "$file")
 	if [[ -z $stamp ]]; then
-		RL_FAILED=$(( RL_FAILED + 1 ))
-		rl_warn "no capture date and no readable mtime, skipping: $file"
+		TOOL_FAILED=$(( TOOL_FAILED + 1 ))
+		to_warn "no capture date and no readable mtime, skipping: $file"
 		continue
 	fi
 
@@ -234,10 +236,10 @@ while IFS= read -r -d '' file; do
 	# than assumed free.
 	rl_free_path "$target"
 	rl_rename "$file" "$RL_FREE_PATH"
-done < <(find "$RL_ROOT" ${RL_DEPTH[@]+"${RL_DEPTH[@]}"} -type f \
+done < <(find "$TOOL_ROOT" ${TOOL_DEPTH[@]+"${TOOL_DEPTH[@]}"} -type f \
 	\( -iname '*.jpg' -o -iname '*.jpeg' \) -print0)
 
-status=$RL_EX_OK
-rl_summary "*.jpg and *.jpeg" || status=$?
+status=$TOOL_EX_OK
+to_summary "*.jpg and *.jpeg" || status=$?
 rl_log_reverse_hint
 exit "$status"

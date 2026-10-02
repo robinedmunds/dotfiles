@@ -40,3 +40,27 @@ _Avoid_: diff, conflict, divergence
 Sensitive material — private keys, tokens, passwords — that is never committed to the
 Repository and never Managed. Secrets exist only in Home, untouched by this tooling.
 _Avoid_: credentials, sensitive file
+
+## Tools
+
+**Authoritative Directory**:
+Of two directories holding copies of the same files, the one whose timestamps are taken as
+the correct ones. Every other file in the other directory is corrected to match it, and files
+present only in the other directory are left alone.
+_Avoid_: master, original, primary, left, A
+
+**Counterpart**:
+The file in the other directory that has the same path relative to its own directory's root.
+Two files are a pair of Counterparts when their relative paths match, which is what "the same
+file in two copies of a tree" means. Pairing on relative path rather than content is
+deliberate, so a file renamed on one side has no Counterpart on the other and is reported
+rather than paired with whatever now sits at that path.
+_Avoid_: match, twin, same file, original
+
+**Undo Log**:
+An append-only file recording one line per change a tool made, in enough detail to put things
+back: the path and what it was called before. It records where to return to, nothing more.
+It is never a rollback — a file changed or deleted since the run is not restored by replaying
+the log — and it lives outside every directory the tool was pointed at, because it is an
+ordinary file that a tool working through a directory will otherwise find and change.
+_Avoid_: backup, history, journal, manifest

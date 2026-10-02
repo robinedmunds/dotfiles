@@ -17,40 +17,42 @@ fi
 # shellcheck source=rename-lib.sh
 source "$RL_LIB_DIR/rename-lib.sh"
 
-RL_PROG=$(basename -- "$0")
+TOOL_PROG=$(basename -- "$0")
 
 usage() {
 	cat <<-EOF
-		Usage: $RL_PROG [OPTIONS] <from-ext> <to-ext>
+		Usage: $TOOL_PROG [OPTIONS] <from-ext> <to-ext>
 
 		Give every matching file a new extension, keeping the rest of its name.
 		Matching is case-insensitive, so both .JPG and .jpg are found by "jpg".
 		A leading dot on either argument is accepted and ignored.
 
-	$(rl_help_options)
+	$(to_help_options)
+
+	$(to_undo_log_note 'one "old<TAB>new" line per rename: the name the file had, then the name it has')
 
 		Examples:
 		  # See what would change, without changing it
-		  $RL_PROG --dry-run jpg png
+		  $TOOL_PROG --dry-run jpg png
 
 		  # Recurse, and record every rename so the run can be reversed
-		  $RL_PROG --recursive --undo-log /tmp/renames.tsv jpg png
+		  $TOOL_PROG --recursive --undo-log /tmp/renames.tsv jpg png
 
 		  # Rename inside a directory rather than the current one
-		  $RL_PROG --directory photos jpeg webp
+		  $TOOL_PROG --directory photos jpeg webp
 	EOF
 }
 
-if rl_wants_help "$@"; then
-	if (( RL_WANTS_VERSION )); then
-		printf '%s %s\n' "$RL_PROG" "$RL_VERSION"
+if to_wants_help "$@"; then
+	if (( TOOL_WANTS_VERSION )); then
+		printf '%s %s\n' "$TOOL_PROG" "$RL_VERSION"
 	else
 		usage
 	fi
 	exit 0
 fi
 
-rl_getopts "$@"
+to_getopts "$@"
 
 # An extension is a suffix, never a path. Accept a leading dot, reject anything
 # with a slash in it: "photos/*.jpg" would otherwise match nothing and still
@@ -59,30 +61,30 @@ normalise_ext() {
 	local ext=${1#.}
 
 	if [[ -z $ext ]]; then
-		rl_die "an extension cannot be empty"
+		to_die "an extension cannot be empty"
 	fi
 	if [[ $ext == */* ]]; then
-		rl_die "not an extension: $1"
+		to_die "not an extension: $1"
 	fi
 
 	printf '%s' "$ext"
 }
 
-if (( ${#RL_ARGS[@]} != 2 )); then
+if (( ${#TOOL_ARGS[@]} != 2 )); then
 	usage >&2
-	rl_die "expected two extensions, got ${#RL_ARGS[@]}"
+	to_die "expected two extensions, got ${#TOOL_ARGS[@]}"
 fi
 
-FROM=$(normalise_ext "${RL_ARGS[0]}")
-TO=$(normalise_ext "${RL_ARGS[1]}")
+FROM=$(normalise_ext "${TOOL_ARGS[0]}")
+TO=$(normalise_ext "${TOOL_ARGS[1]}")
 
-if [[ ! -d $RL_ROOT ]]; then
-	rl_die "not a directory: $RL_ROOT"
+if [[ ! -d $TOOL_ROOT ]]; then
+	to_die "not a directory: $TOOL_ROOT"
 fi
 
 rl_counters_reset
-rl_depth_args
-rl_prompt_ready
+to_depth_args
+to_prompt_ready
 
 while IFS= read -r -d '' file; do
 	# find prints ./name when it is given "."; drop it so the name
@@ -106,9 +108,9 @@ while IFS= read -r -d '' file; do
 	# Build from the stem so the extension comes out as it was given:
 	# SCAN.JPG becomes SCAN.png, not SCAN.PNG.
 	rl_rename "$file" "$dir$(rl_join_ext "$RL_STEM" "$TO")"
-done < <(find "$RL_ROOT" ${RL_DEPTH[@]+"${RL_DEPTH[@]}"} -type f -iname "*.$FROM" -print0)
+done < <(find "$TOOL_ROOT" ${TOOL_DEPTH[@]+"${TOOL_DEPTH[@]}"} -type f -iname "*.$FROM" -print0)
 
-status=$RL_EX_OK
-rl_summary "*.$FROM" || status=$?
+status=$TOOL_EX_OK
+to_summary "*.$FROM" || status=$?
 rl_log_reverse_hint
 exit "$status"

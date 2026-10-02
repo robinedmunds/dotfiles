@@ -1,11 +1,14 @@
-# Tests for install.sh
+# Tests for the scripts
 
 ```sh
 ./tests/run.sh                 # everything
 ./tests/run.sh symlinks drift  # only case files matching these fragments
 ```
 
-296 assertions in eight files, a few seconds. Plain bash and python3, no network.
+Eight files cover `install.sh`. One covers `sync-timestamps.sh`; it is described under
+[The tool cases](#the-tool-cases) below, because it reaches the scripts a different way.
+
+385 assertions in nine files, a few seconds. Plain bash and python3, no network.
 It also leans on `find -print0`, `sort -z`, `stat -c` and `date` -- all present in
 GNU coreutils/findutils and in BusyBox, which is the whole of what it asks for.
 
@@ -82,6 +85,37 @@ Without python3 those 13 cases **skip**. They are counted and printed, and
 `run.sh` still exits 0 — but a green run that skipped half the suite is not
 the same as a green run, and the summary says so.
 
+## The tool cases
+
+`cases/timestamps.sh` covers `sync-timestamps.sh`, and there are three differences worth
+knowing before adding to it.
+
+**It runs the script out of the Repository, not from an installed copy.** The real
+`~/.local/bin/sync-timestamps.sh` on this machine is never what a case tests; the one in
+`home/.local/bin` is, so a case cannot pass against a stale install. This works because each
+tool resolves its library relative to its own location rather than through `PATH`, which is a
+property worth having and worth testing.
+
+**The fixtures are directories inside the fake Home.** `$HOME/a` and `$HOME/b`, with the
+working directory set to the fake Home so a case can say `a b`. That reuses the existing
+snapshot machinery whole: the "wrote nothing" assertion is the same one `install.sh` uses, and
+because the snapshot carries modification times it catches a timestamp change that leaves the
+bytes identical — which for this tool is *the* way to fail.
+
+**The interactive cases need no terminal.** `sync-timestamps.sh` asks its questions on fd 3,
+which is a copy of the stdin it was started with, and walks its file list down a pipe of its own
+making. A pipe on stdin is therefore answers and not filenames, so `run_tool_with_input` can
+drive it without python3 and without a skip. `run_tool` closes stdin by default for the same
+reason `run` does: a prompt left to inherit the terminal running the suite would take its
+answer from wherever the suite happened to be run from.
+
+One case reaches outside the sandbox on purpose. Setting a timestamp is refused by ownership
+rather than by mode — the owner of a file can `touch` it whatever its mode says — so a
+read-only file is not a way to make the tool fail, and the failure path is unreachable in a
+sandbox this user owns. `/proc/version` is the one file reliably present that this user does
+not own and cannot write. The case probes that first and **skips** rather than pretending to
+have run, in keeping with the rule above.
+
 ## Layout
 
 | File | Covers |
@@ -97,6 +131,7 @@ the same as a green run, and the summary says so.
 | `cases/symlinks.sh` | symlinks in both directions (ADR 0004) |
 | `cases/dry-run.sh` | the promise that `--dry-run` changes nothing |
 | `cases/prompt.sh` | the question itself, and every answer to it |
+| `cases/timestamps.sh` | `sync-timestamps.sh`, run out of the Repository |
 
 ## Adding a case
 
@@ -122,6 +157,20 @@ returns — `copy_install_script` writes into the fixture repository, `in_home`
 writes into Home itself, and a case may create a decoy under `$SANDBOX/outside`
 before the run. A baseline taken any earlier would count the fixture as the
 thing that changed.
+
+A case for a script in `home/.local/bin` uses `run_tool` in place of `run`, with the script's
+name and its own arguments:
+
+```bash
+run_tool sync-timestamps.sh --dry-run a b
+
+assert_rc 0 'exit 0'
+assert_same_mtime 'a/f.txt' 'b/f.txt' 'DIR_B took the time from DIR_A'
+```
+
+`run_tool` freezes the same snapshots `run` does, so `assert_nothing_written` works in a tool
+case unchanged. `assert_mtime REL WHAT` takes any date `touch -d` accepts rather than an epoch,
+because a case with `1659946088` hard-coded in it cannot be read.
 
 Registering a block inline does not work, and cannot be made to:
 
@@ -154,9 +203,30 @@ fully green run of all 295 assertions, on a machine whose `find` had no
 The checker lives outside the repository, in `/tmp/opencode/mutation-check.py`,
 because it needs a throwaway copy of the whole repository to work in.
 
+`cases/timestamps.sh` was checked the same way, against nineteen mutations of
+`sync-timestamps.sh` and `tool-lib.sh` — all nineteen caught. Two candidates were dropped
+before running, and why is the useful part: mutating `rename-lib.sh` proves nothing about
+these cases, because `sync-timestamps.sh` does not source it, and removing the double-source
+guard in `tool-lib.sh` introduces no bug, since everything it re-runs is an idempotent
+assignment. A mutation that cannot express a bug is not evidence of a hole. The rest were
+aimed at the ways this tool could plausibly be wrong — the direction reversed, `--dry-run`
+writing, the same-directory and nesting refusals deleted, a file with no Counterpart written
+anyway, a symlink written through, a file in DIR_B whose counterpart in DIR_A is only a
+symlink going unreported, an empty DIR_A reported as a clean run, the depth fixed at one, the
+Undo Log recording nothing, the printed reverse command doing nothing, `--interactive`
+ignored, a failure not counted, a DIR_B-only file unreported, the summary counting renames,
+and the shared parser accepting an unknown flag, deferring an unwritable Undo Log to
+mid-run, dropping the failed exit code and scanning only the first argument for help.
+
+Writing those mutations found a gap the cases had not: nothing anywhere tested the shared
+parser's unknown-flag or unwritable-log paths, because the `rename-*` tools have no coverage
+at all. Two cases were added for them before the checker was run.
+
+Its checker is at `/tmp/opencode/mutation-check-timestamps.py`, alongside the other.
+
 ## Known behaviour pinned deliberately
 
-Two cases assert something that looks wrong. Both are commented where they
+Three cases assert something that looks wrong. All are commented where they
 live. They are pinned so that fixing them cannot pass unnoticed.
 
 - `cases/symlinks.sh` — a symlink under `home/` installs with mode 777,
@@ -164,3 +234,7 @@ live. They are pinned so that fixing them cannot pass unnoticed.
   one-word fix in `install.sh`, but not this suite's to make.
 - `cases/dry-run.sh` — `--dry-run --yes` exits 2 where `--yes` exits 0, so a
   CI gate written that way reports the machine as never current.
+- `cases/timestamps.sh` — `touch -r` sets the access time as well as the
+  modification time, so a file in DIR_B ends up with DIR_A's atime too. A
+  documented property of the tool, not an oversight; see
+  [docs/specs/timestamps.md](../docs/specs/timestamps.md).

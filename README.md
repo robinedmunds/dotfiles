@@ -99,7 +99,7 @@ after a fresh clone. Bypass a false positive with `git commit --no-verify`.
 ./tests/run.sh
 ```
 
-296 assertions over a throwaway Home in a throwaway sandbox; your real files
+385 assertions over a throwaway Home in a throwaway sandbox; your real files
 are never in scope. Plain bash, plus python3 for the cases that need a real
 terminal. Without python3 those cases skip and say so. See
 [tests/README.md](tests/README.md).
@@ -108,7 +108,8 @@ terminal. Without python3 those cases skip and say so. See
 
 - [GLOSSARY.md](GLOSSARY.md) — the vocabulary this project uses
 - [docs/adr/](docs/adr/) — why things work the way they do
-- [tests/README.md](tests/README.md) — how install.sh is tested
+- [docs/specs/](docs/specs/) — what each tool is specified to do
+- [tests/README.md](tests/README.md) — how the scripts are tested
 
 | ADR | Decision |
 |---|---|
@@ -117,6 +118,12 @@ terminal. Without python3 those cases skip and say so. See
 | [0003](docs/adr/0003-managed-files-live-under-home.md) | Managed Files live under `home/`, mirroring Home |
 | [0004](docs/adr/0004-symlinks-in-home-are-replaced-never-written-through.md) | Symlinks in Home are replaced, never written through |
 | [0005](docs/adr/0005-detect-drift-by-comparing-content.md) | Detect Drift by comparing content against the repository |
+| [0006](docs/adr/0006-tool-lib-is-the-shared-floor.md) | `tool-lib.sh` is the shared floor; `rename-lib.sh` is what is left of the renaming |
+
+| Spec | Covers |
+|---|---|
+| [timestamps](docs/specs/timestamps.md) | `sync-timestamps.sh` — copying one tree's timestamps onto another |
+| [image-tools](docs/specs/image-tools.md) | `img-convert.sh` and `img-resize-*.sh` |
 
 ## Assumptions
 

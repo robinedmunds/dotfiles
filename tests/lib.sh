@@ -41,6 +41,9 @@ INSTALL_SH_UNDER_TEST=
 HOME_BEFORE=
 OUTSIDE_BEFORE=
 
+# The scripts under test in ~/.local/bin.
+readonly TOOLS_DIR="$REPO_ROOT/home/.local/bin"
+
 # ---------------------------------------------------------------------------
 # Case registration
 # ---------------------------------------------------------------------------
@@ -203,6 +206,52 @@ run_cmd() {
 # Run the script under test against the fake Home.
 run() {
 	run_cmd env HOME="$HOME_DIR" LC_ALL=C "$INSTALL_SH_UNDER_TEST" "$@"
+}
+
+# ---------------------------------------------------------------------------
+# The tools in ~/.local/bin
+# ---------------------------------------------------------------------------
+
+# Run a script from home/.local/bin, from the Repository rather than from an
+# installed copy, so that a case tests what is committed and never depends on
+# what Home happens to hold. Each of these tools resolves its library relative to
+# its own location, which is what makes running it from the Repository work.
+#
+# The fixtures belong inside the fake Home, and the working directory is the fake
+# Home too, so a case can say `a b` for two fixture directories. That is
+# deliberate: it puts a tool which defaults to the current directory inside the
+# same sandbox the snapshot promises nothing outside of matters in.
+#
+# stdin is closed unless the case says otherwise, because a prompt reading from
+# it would otherwise take its answer from the terminal running the suite.
+run_tool() {
+	local name=$1
+	shift
+
+	freeze_snapshots
+	mark_run
+	stdout=$(cd -- "$HOME_DIR" && "$TOOLS_DIR/$name" "$@" \
+		</dev/null 2>"$SCRATCH/stderr")
+	rc=$?
+	stderr=$(cat "$SCRATCH/stderr")
+}
+
+# As run_tool, with INPUT on stdin.
+#
+# For the interactive cases. These tools ask their questions on fd 3, which is a
+# copy of the stdin they were started with, and walk their file list down a pipe
+# of their own making, so a pipe on stdin is answers and not filenames. No
+# terminal is needed, and none of these cases skip.
+run_tool_with_input() {
+	local input=$1 name=$2
+	shift 2
+
+	freeze_snapshots
+	mark_run
+	stdout=$(cd -- "$HOME_DIR" && printf '%s' "$input" |
+		"$TOOLS_DIR/$name" "$@" 2>"$SCRATCH/stderr")
+	rc=$?
+	stderr=$(cat "$SCRATCH/stderr")
 }
 
 # True when the prompt-driving pty driver is usable.
@@ -478,6 +527,45 @@ assert_not_err() {
 	fi
 }
 
+# Nothing was written to stderr at all. For the paths where output on stderr
+# would mean the answer went to the wrong stream: help, and a version.
+assert_no_err() {
+	local what=$1
+	if [[ -z $stderr ]]; then
+		ok "$what"
+	else
+		fail "$what -- stderr has: $(one_line "$stderr")"
+	fi
+}
+
+# The file at REL holds LINE, exactly, somewhere in it. For a log whose lines
+# arrive in whatever order find produced, where assert_content's whole-file
+# comparison would be asserting an order nothing promised.
+assert_file_has_line() {
+	local rel=$1 line=$2 what=$3
+	local path
+
+	# A REL of the form "@abs/path" is taken as an absolute path. The fake Home
+	# is under a mktemp directory whose name a case cannot know, so a log
+	# recorded with an absolute path cannot be spelled as a relative one.
+	case $rel in
+		@*) path=${rel#@} ;;
+		*) path=$HOME_DIR/$rel ;;
+	esac
+
+	if [[ ! -f $path ]]; then
+		fail "$what -- $path is missing"
+		return
+	fi
+
+	if grep -Fxq -- "$line" "$path"; then
+		ok "$what"
+	else
+		fail "$what -- $path does not hold the line: $line"
+		printf '          it holds: %s\n' "$(one_line "$(cat -- "$path")")"
+	fi
+}
+
 # The Managed File at REL holds exactly TEXT.
 assert_content() {
 	local rel=$1 want=$2 what=$3
@@ -548,6 +636,77 @@ assert_mode() {
 		ok "$what"
 	else
 		fail "$what -- ~/$rel is mode $got, expected $want"
+	fi
+}
+
+# Give the file at REL the modification time STAMP, which may be anything
+# `touch -d` accepts. A date rather than an epoch, because a case that has to
+# hard-code 1659946088 cannot be read.
+set_mtime() {
+	local rel=$1 stamp=$2
+
+	mkdir -p -- "$HOME_DIR/$(dirname -- "$rel")"
+	if ! touch -d "$stamp" -- "$HOME_DIR/$rel"; then
+		fail "could not set the mtime of ~/$rel"
+	fi
+}
+
+# The modification time of REL, in whole seconds since the epoch.
+mtime_of() {
+	stat -c '%Y' -- "$HOME_DIR/$1" 2>/dev/null
+}
+
+# The seconds since the epoch for a date `touch -d` accepts.
+#
+# Goes through touch rather than `date -d`, because touch is the thing being
+# tested: a case that computed its expectation with a second parser would be
+# checking two implementations against each other rather than one.
+epoch_of() {
+	local dir
+	dir=$(mktemp -d "$SCRATCH/epoch.XXXXXX") || return 1
+	printf 'probe\n' >"$dir/probe" || return 1
+	touch -d "$1" -- "$dir/probe" || return 1
+	stat -c '%Y' -- "$dir/probe"
+	rm -rf -- "$dir"
+}
+
+# REL's modification time is WANT, given either as a date `touch -d` accepts or
+# as an epoch. Compared in whole seconds, which is all `stat -c %Y` promises
+# anywhere; see SNAPSHOT_MTIME_FORMAT for why the snapshot cannot promise more.
+assert_mtime() {
+	local rel=$1 want=$2 what=$3
+	local expected got
+
+	if [[ ! -e $HOME_DIR/$rel ]]; then
+		fail "$what -- ~/$rel is missing"
+		return
+	fi
+
+	expected=$(epoch_of "$want")
+	got=$(mtime_of "$rel")
+	if [[ $got == "$expected" ]]; then
+		ok "$what"
+	else
+		fail "$what -- ~/$rel has mtime $got, expected $expected"
+	fi
+}
+
+# Two files carry the same modification time.
+assert_same_mtime() {
+	local rel_a=$1 rel_b=$2 what=$3
+	local a b
+
+	if [[ ! -e $HOME_DIR/$rel_a || ! -e $HOME_DIR/$rel_b ]]; then
+		fail "$what -- ~/$rel_a or ~/$rel_b is missing"
+		return
+	fi
+
+	a=$(mtime_of "$rel_a")
+	b=$(mtime_of "$rel_b")
+	if [[ $a == "$b" ]]; then
+		ok "$what"
+	else
+		fail "$what -- ~/$rel_a is $a and ~/$rel_b is $b"
 	fi
 }
 

@@ -16,11 +16,11 @@ fi
 # shellcheck source=rename-lib.sh
 source "$RL_LIB_DIR/rename-lib.sh"
 
-RL_PROG=$(basename -- "$0")
+TOOL_PROG=$(basename -- "$0")
 
 usage() {
 	cat <<-EOF
-		Usage: $RL_PROG [OPTIONS] [DIRECTORY]
+		Usage: $TOOL_PROG [OPTIONS] [DIRECTORY]
 
 		Rename every file in DIRECTORY to a fresh lowercase UUID, keeping its
 		extension. DIRECTORY defaults to the current directory.
@@ -31,51 +31,53 @@ usage() {
 		Symlinks are skipped: they are not files, and renaming one would leave
 		its target under the old name.
 
-	$(rl_help_options)
+	$(to_help_options)
+
+	$(to_undo_log_note 'one "old<TAB>new" line per rename: the name the file had, then the name it has')
 
 		Examples:
 		  # See what would change, without changing it
-		  $RL_PROG --dry-run
+		  $TOOL_PROG --dry-run
 
 		  # Recurse, and record every rename so the run can be reversed
-		  $RL_PROG --recursive --undo-log /tmp/renames.tsv
+		  $TOOL_PROG --recursive --undo-log /tmp/renames.tsv
 
 		  # Rename inside a directory
-		  $RL_PROG ~/Downloads
+		  $TOOL_PROG ~/Downloads
 	EOF
 }
 
-if rl_wants_help "$@"; then
-	if (( RL_WANTS_VERSION )); then
-		printf '%s %s\n' "$RL_PROG" "$RL_VERSION"
+if to_wants_help "$@"; then
+	if (( TOOL_WANTS_VERSION )); then
+		printf '%s %s\n' "$TOOL_PROG" "$RL_VERSION"
 	else
 		usage
 	fi
 	exit 0
 fi
 
-rl_getopts "$@"
+to_getopts "$@"
 
 # The directory may still arrive positionally, the way it always has. An
 # explicit --directory wins, and passing both is a mistake worth reporting.
-if (( ${#RL_ARGS[@]} > 1 )); then
+if (( ${#TOOL_ARGS[@]} > 1 )); then
 	usage >&2
-	rl_die "expected at most one directory, got ${#RL_ARGS[@]}"
+	to_die "expected at most one directory, got ${#TOOL_ARGS[@]}"
 fi
-if (( ${#RL_ARGS[@]} == 1 )) && [[ $RL_ROOT == "." ]]; then
-	RL_ROOT=${RL_ARGS[0]}
+if (( ${#TOOL_ARGS[@]} == 1 )) && [[ $TOOL_ROOT == "." ]]; then
+	TOOL_ROOT=${TOOL_ARGS[0]}
 fi
 
-if [[ ! -d $RL_ROOT ]]; then
-	rl_die "not a directory: $RL_ROOT"
+if [[ ! -d $TOOL_ROOT ]]; then
+	to_die "not a directory: $TOOL_ROOT"
 fi
 
 # Matches a bare UUID stem, with or without a leading dot and in any case.
 readonly UUID_STEM='^.*\.?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 
 rl_counters_reset
-rl_depth_args
-rl_prompt_ready
+to_depth_args
+to_prompt_ready
 
 # -print0 with `read -d ''`, not `read`. The previous version piped `find` into
 # a plain `read`, which split a filename containing a newline into two
@@ -98,9 +100,9 @@ while IFS= read -r -d '' file; do
 	fi
 
 	rl_rename "$file" "$target"
-done < <(find "$RL_ROOT" ${RL_DEPTH[@]+"${RL_DEPTH[@]}"} -type f -print0)
+done < <(find "$TOOL_ROOT" ${TOOL_DEPTH[@]+"${TOOL_DEPTH[@]}"} -type f -print0)
 
-status=$RL_EX_OK
-rl_summary || status=$?
+status=$TOOL_EX_OK
+to_summary || status=$?
 rl_log_reverse_hint
 exit "$status"

@@ -20,11 +20,11 @@ fi
 # shellcheck source=rename-lib.sh
 source "$RL_LIB_DIR/rename-lib.sh"
 
-RL_PROG=$(basename -- "$0")
+TOOL_PROG=$(basename -- "$0")
 
 usage() {
 	cat <<-EOF
-		Usage: $RL_PROG [OPTIONS] <file-or-directory>...
+		Usage: $TOOL_PROG [OPTIONS] <file-or-directory>...
 
 		Rename each file to its modification time, as
 		YYYY-MM-DD_HHMMSS.sss, keeping the original extension and directory.
@@ -33,53 +33,55 @@ usage() {
 		--recursive. Run it with --dry-run first: this renames everything it
 		is pointed at.
 
-	$(rl_help_options)
+	$(to_help_options)
+
+	$(to_undo_log_note 'one "old<TAB>new" line per rename: the name the file had, then the name it has')
 
 		Examples:
 		  # Preview a single file
-		  $RL_PROG --dry-run ~/Downloads/report.pdf
+		  $TOOL_PROG --dry-run ~/Downloads/report.pdf
 
 		  # A whole directory, with a record of every rename
-		  $RL_PROG --undo-log /tmp/renames.tsv ~/Downloads
+		  $TOOL_PROG --undo-log /tmp/renames.tsv ~/Downloads
 
 		  # Every file directly inside a directory
-		  $RL_PROG ~/photos
+		  $TOOL_PROG ~/photos
 
 		  # The same, walked all the way down
-		  $RL_PROG --recursive --directory ~/photos
+		  $TOOL_PROG --recursive --directory ~/photos
 	EOF
 }
 
-if rl_wants_help "$@"; then
-	if (( RL_WANTS_VERSION )); then
-		printf '%s %s\n' "$RL_PROG" "$RL_VERSION"
+if to_wants_help "$@"; then
+	if (( TOOL_WANTS_VERSION )); then
+		printf '%s %s\n' "$TOOL_PROG" "$RL_VERSION"
 	else
 		usage
 	fi
 	exit 0
 fi
 
-rl_getopts "$@"
+to_getopts "$@"
 
-arg_count=${#RL_ARGS[@]}
+arg_count=${#TOOL_ARGS[@]}
 
 if (( arg_count == 0 )); then
 	# --directory on its own names the directory to sweep, which is the one
 	# form of it that makes sense for a tool whose arguments are otherwise
 	# paths.
-	if (( RL_ROOT_SET )); then
-		RL_ARGS=("$RL_ROOT")
+	if (( TOOL_ROOT_SET )); then
+		TOOL_ARGS=("$TOOL_ROOT")
 	else
 		usage >&2
-		rl_die "no files given"
+		to_die "no files given"
 	fi
-elif (( RL_ROOT_SET )); then
-	rl_die "--directory names one directory; pass it on its own, or list the paths instead"
+elif (( TOOL_ROOT_SET )); then
+	to_die "--directory names one directory; pass it on its own, or list the paths instead"
 fi
 
-for arg in "${RL_ARGS[@]}"; do
+for arg in "${TOOL_ARGS[@]}"; do
 	if [[ ! -e $arg ]]; then
-		rl_die "no such file or directory: $arg"
+		to_die "no such file or directory: $arg"
 	fi
 done
 
@@ -90,11 +92,11 @@ done
 stamp_of() {
 	local file=$1 stamp
 
-	if ! stamp=$(rl_mtime_stamp "$file"); then
-		rl_die "cannot read the modification time of $file"
+	if ! stamp=$(to_mtime_stamp "$file"); then
+		to_die "cannot read the modification time of $file"
 	fi
 	if [[ -z $stamp ]]; then
-		rl_die "cannot read the modification time of $file"
+		to_die "cannot read the modification time of $file"
 	fi
 
 	printf '%s' "$stamp"
@@ -129,7 +131,7 @@ rename_file() {
 # name instead of a second file.
 targets=()
 directories=()
-for arg in "${RL_ARGS[@]}"; do
+for arg in "${TOOL_ARGS[@]}"; do
 	if [[ -d $arg ]]; then
 		directories+=("$arg")
 	else
@@ -138,14 +140,14 @@ for arg in "${RL_ARGS[@]}"; do
 done
 
 rl_counters_reset
-rl_prompt_ready
+to_prompt_ready
 
 for file in ${targets[@]+"${targets[@]}"}; do
 	rename_file "$file"
 done
 
 for dir in ${directories[@]+"${directories[@]}"}; do
-	if (( RL_RECURSIVE )); then
+	if (( TOOL_RECURSIVE )); then
 		depth=()
 	else
 		depth=(-maxdepth 1)
@@ -160,7 +162,7 @@ for dir in ${directories[@]+"${directories[@]}"}; do
 	done < <(find "$dir" ${depth[@]+"${depth[@]}"} -type f -print0)
 done
 
-status=$RL_EX_OK
-rl_summary || status=$?
+status=$TOOL_EX_OK
+to_summary || status=$?
 rl_log_reverse_hint
 exit "$status"
