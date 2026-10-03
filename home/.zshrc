@@ -119,10 +119,11 @@ source $ZSH/oh-my-zsh.sh
 # alias zshconfig="mate ~/.zshrc"
 # alias ohmyzsh="mate ~/.oh-my-zsh"
 
-# ROBIN ROBIN ROBIN
-alias update='flatpak update -y && sudo pacman -Syu --noconfirm && date --utc --rfc-3339=seconds >~/last-updated.txt'
-alias vpn='incus exec vpn --env LANG=en_GB.UTF-8 --env TERM=xterm-256color --env EDITOR=vim -- bash'
-alias qr='qrencode -t UTF8'
+# Aliases shared with bash. Sourced after Oh My Zsh (line 91) so these win
+# over the aliases its plugins define.
+if [ -f "$HOME/.aliases" ]; then
+  . "$HOME/.aliases"
+fi
 
 eval "$(starship init zsh)"eval "$(starship init zsh)"
 if command -v tmux &> /dev/null && [ -z "$TMUX" ]; then

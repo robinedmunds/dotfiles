@@ -1,0 +1,17 @@
+#
+# ~/.aliases
+#
+# Sourced by both ~/.bashrc and ~/.zshrc, so it has to stay portable: plain
+# `alias name='command'` definitions whose commands mean the same in both
+# shells. Anything needing setopt, shopt or zsh globbing belongs in that
+# shell's own rc instead.
+#
+# In zsh this is sourced *after* Oh My Zsh, so these override the aliases its
+# plugins define. Run `alias` to see what is actually active.
+
+alias ls='ls --color=auto'
+alias grep='grep --color=auto'
+
+alias update='flatpak update -y && sudo pacman -Syu --noconfirm && date --utc --rfc-3339=seconds >~/last-updated.txt'
+alias vpn='incus exec vpn --env LANG=en_GB.UTF-8 --env TERM=xterm-256color --env EDITOR=vim -- bash'
+alias qr='qrencode -t UTF8'

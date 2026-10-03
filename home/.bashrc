@@ -5,8 +5,10 @@
 # If not running interactively, don't do anything
 [[ $- != *i* ]] && return
 
-alias ls='ls --color=auto'
-alias grep='grep --color=auto'
+# Aliases shared with zsh
+if [ -f "$HOME/.aliases" ]; then
+  . "$HOME/.aliases"
+fi
 PS1='[\u@\h \W]\$ '
 
 export PATH="${PATH}:/home/robin/.local/bin/"
