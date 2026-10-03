@@ -9,7 +9,17 @@
 # In zsh this is sourced *after* Oh My Zsh, so these override the aliases its
 # plugins define. Run `alias` to see what is actually active.
 
-alias ls='ls --color=auto'
+# lsd fallback for ls, la, ll
+if command -v lsd >/dev/null 2>&1; then
+  alias ls='lsd --color=auto'
+  alias la='lsd --color=auto -A'
+  alias ll='lsd --color=auto -l'
+else
+  alias ls='ls --color=auto'
+  alias la='ls --color=auto -A'
+  alias ll='ls --color=auto -l'
+fi
+
 alias grep='grep --color=auto'
 
 alias update='flatpak update -y && sudo pacman -Syu --noconfirm && date --utc --rfc-3339=seconds >~/last-updated.txt'
