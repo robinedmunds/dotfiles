@@ -342,6 +342,7 @@ il_getopts() {
 	IL_DOCTOR=0
 	IL_QUALITY=''
 	IL_SIZE=''
+	IL_ASSUME_UPRIGHT=0
 	IL_ARGS=()
 
 	while (( $# )); do
@@ -371,6 +372,9 @@ il_getopts() {
 				;;
 			--doctor)
 				IL_DOCTOR=1
+				;;
+			--assume-upright)
+				IL_ASSUME_UPRIGHT=1
 				;;
 			--)
 				shift
@@ -557,15 +561,23 @@ il_probe_write() {
 # True if this build can read the orientation of a file, as far as it can be
 # told without a photo in front of it.
 #
-# A generated JPEG carries no Exif, so a build that answers with a plain 1 is
-# showing that the field is exposed at all. A build that does not answer gets
-# IL_PROBE_ERROR saying so, which is the case the exiftool fallback is for.
+# A generated file of either format carries no Exif, so a build that answers
+# with a plain 1 is showing that the field is exposed at all. Both a JPEG and a
+# PNG are asked, because a build can answer for one and not the other, and a
+# desktop screenshot is a PNG: a doctor that only asked about JPEGs cannot see a
+# failure that is specific to the file people most often resize.
+#
+# A build that does not answer gets IL_ORIENTATION_ERROR saying so, which is the
+# case the exiftool fallback is for.
 IL_ORIENTATION_ERROR=''
 il_probe_orientation() {
-	local dir=$1 probe reason
+	local dir=$1 ext=$2 probe reason
 
 	IL_ORIENTATION_ERROR=''
-	probe="$dir/.img-probe-orientation.jpg"
+	# The probe filename carries the format as its extension, because libvips
+	# picks its loader from the extension and a .png asked for a JPEG's loader
+	# would not test the JPEG's reader.
+	probe="$dir/.img-probe-orientation.$ext"
 
 	if ! reason=$(vips black "$probe" 16 16 --bands 3 2>&1 >/dev/null); then
 		IL_ORIENTATION_ERROR="cannot make a test image: $(il_first_line "$reason")"
@@ -573,8 +585,12 @@ il_probe_orientation() {
 		return 1
 	fi
 
+	# A command that fails without saying why is its own kind of problem, and
+	# printing a bare "no" beside no reason leaves the reader with nothing to go
+	# on. A few words cost nothing and say what happened.
 	if ! reason=$(vipsheader -f orientation -- "$probe" 2>&1 >/dev/null); then
-		IL_ORIENTATION_ERROR=$(il_first_line "$reason")
+		reason=$(il_first_line "$reason")
+		IL_ORIENTATION_ERROR=${reason:-'it exits non-zero and says nothing on stderr'}
 		rm -f -- "$probe"
 		return 1
 	fi
@@ -583,52 +599,154 @@ il_probe_orientation() {
 	return 0
 }
 
-# Print the EXIF orientation of FILE, from 1 to 8, or 1 when the file carries
-# none. Fails when the file has Exif that cannot be read, because the one thing
-# a resize must never do is ignore a rotate-for-display tag: sizing against the
-# stored dimensions then constrains the wrong axis and the result is sideways.
+# ---------------------------------------------------------------------------
+# Orientation
+# ---------------------------------------------------------------------------
+
+# How a file's orientation was settled, which the caller needs to know because
+# only one of these may be applied by libvips on its own:
+#
+#   read    a reader gave the value, and libvips will apply that same tag itself
+#   none    the file carries no Exif, so there is nothing for libvips to apply
+#           either, and it is told so rather than left to work it out again
+#   forced  --assume-upright stood in for a tag no reader could read; the
+#           pixels are left as stored and the tag goes through untouched
+#
+# Set by il_orientation, through il_orientation_result below, and kept only for
+# the length of the call. A caller cannot read it afterwards, because a function
+# that prints the orientation is nearly always called as `VAR=$(...)` and the
+# assignment would happen in the subshell, where a variable set inside is set and
+# then forgotten. Printing it is the way out of that.
+IL_ORIENTATION_KIND=''
+
+# Print "<kind> <orientation>" for the call that just read one.
+#
+# A caller that captured the orientation with `ORIENTATION=$(il_orientation ...)`
+# has the kind too, in the same string, and splits the two fields for itself.
+# Returning both at once is what makes the pair survive a subshell, and leaving
+# the split to the caller keeps the reading of the two fields next to the decision
+# about what they mean, rather than behind a convention in here.
+il_orientation_result() {
+	IL_ORIENTATION_KIND=${2:-}
+	printf '%s %s' "$IL_ORIENTATION_KIND" "${1:-}"
+}
+
+# True when a format keeps its rotation outside Exif, so that the absence of
+# Exif in the file says nothing about there being a rotate-for-display tag.
+#
+# HEIF and AVIF are both read through one loader, and both carry orientation in
+# transformation boxes of their own rather than in Exif, so searching a HEIF
+# file for Exif is a search for something that is never there. Those two always
+# go to a reader.
+il_orientation_is_intrinsic() {
+	case ${1:-} in
+		heic | avif) return 0 ;;
+	esac
+
+	return 1
+}
+
+# True when FILE carries Exif, decided from its own bytes rather than by asking
+# a reader anything.
+#
+# This is the question the whole orientation path turns on, and a reader cannot
+# answer it: libvips carries the Exif slot on every image it loads, so asking it
+# whether there is Exif data reports on the image rather than on the tag in it.
+# An absent tag and an unreadable one come back the same way, which put every
+# file with no rotate-for-display tag at all -- every screenshot -- in the same
+# class as a photograph whose Exif cannot be parsed, and refused both.
+#
+# All three Exif containers are searched in every file, whatever the file is
+# called, so a JPEG carrying Exif under the wrong suffix is still recognised as
+# carrying it.
+#
+# The search errs towards yes. A false yes costs one more question of a reader,
+# which is the behaviour this path had before; a false no costs a sideways
+# photograph. A false yes is possible where the bytes are picture data rather
+# than a declared name -- deflate output can contain eXIf by chance -- and
+# ruling it out would mean parsing the PNG chunk table to read one field.
+il_has_exif() {
+	local file=$1
+
+	# grep is already wanted by --doctor, so this is not a new dependency. Its
+	# absence is taken as Exif present rather than absent, because that is the
+	# direction in which the answer is a sideways photograph rather than a
+	# question asked of a reader that is not there.
+	command -v grep >/dev/null 2>&1 || return 0
+
+	LC_ALL=C grep -a -q -F -e Exif -e eXIf -e EXIF -- "$file" 2>/dev/null
+}
+
+# Print the EXIF orientation of FILE, from 1 to 8, or 1 for a file that carries
+# no orientation in it, as "<kind> <orientation>" -- see il_orientation_result for
+# why the kind travels back with the value rather than in a variable.
+#
+# A file with no Exif has an orientation of 1 by definition, and that is settled
+# here from the bytes (see il_has_exif) rather than from a reader, which is also
+# why no reader is run for one: most of what these tools get pointed at is
+# screenshots, and a reader consulted about every one of them would be two
+# processes spent to learn that a file is what it plainly is.
+#
+# A file with Exif in it that no reader could read is refused rather than guessed
+# at, because sizing against the stored dimensions of a photograph that is meant
+# to be turned constrains the wrong axis and produces a sideways result.
 #
 # The order is libvips first and exiftool second, because libvips is the backend
-# these tools already need and exiftool may not be installed at all. Refusing is
-# the last resort, and only for the case that is actually dangerous: a file with
-# Exif in it that neither could read. A file with no Exif at all has an
-# orientation of 1 by definition, and that is not a failure to refuse over.
+# these tools already need and exiftool may not be installed at all. What either
+# of them answers is checked before it is returned, so a build whose reader
+# answers with something that is not an orientation is refused rather than
+# believed.
 #
-# Prints the orientation, or warns why it cannot and returns 1. It does not
-# exit: a caller almost certainly reaches this inside a command substitution,
-# where an exit would leave the subshell and not the tool.
+# Prints "<kind> <orientation>", or warns why it cannot and returns 1. It does
+# not exit: a caller reaches this inside a command substitution, where an exit
+# would leave the subshell and not the tool.
 il_orientation() {
-	local file=$1 value=''
+	local file=$1 format=${2:-} value='' raw=''
+
+	if ! il_orientation_is_intrinsic "$format" && ! il_has_exif "$file"; then
+		il_orientation_result 1 none
+		return 0
+	fi
 
 	if value=$(vipsheader -f orientation -- "$file" 2>/dev/null); then
 		value=$(il_first_int "$value")
-		if [[ -n $value ]]; then
-			printf '%s' "$value"
+		if [[ $value =~ ^[1-8]$ ]]; then
+			il_orientation_result "$value" read
 			return 0
 		fi
+		raw=${raw:-$value}
 	fi
 
 	# exiftool is a Perl script with its own idea of what an option is, so it
-	# gets no `--` to end them: the path is passed as it arrived.
+	# gets no `--` to end them: the path is passed as it arrived. It exits 0 on
+	# a file with no Orientation tag at all, printing nothing, which is why an
+	# empty answer is not an answer.
 	if command -v exiftool >/dev/null 2>&1; then
 		if value=$(exiftool -n -s3 -Orientation "$file" 2>/dev/null); then
 			value=$(il_first_int "$value")
-			if [[ -n $value ]]; then
-				printf '%s' "$value"
+			if [[ $value =~ ^[1-8]$ ]]; then
+				il_orientation_result "$value" read
 				return 0
 			fi
+			raw=${raw:-$value}
 		fi
 	fi
 
-	# Exif is there and neither tool could read it. Refuse rather than guess.
-	if vipsheader -f exif-data -- "$file" >/dev/null 2>&1; then
-		il_warn "cannot read the Exif orientation of $file, and this file has Exif in
-    it. Resizing it without knowing how it is meant to be displayed can
-    produce a sideways image, so nothing has been written."
+	# Two failures that need different things done about them on the machine
+	# this ran on, so they are not reported as one. A reader that answered with
+	# something else answered *something*, which is a different problem from a
+	# reader that answered nothing at all.
+	if [[ -n $raw ]]; then
+		il_warn "cannot use the orientation of $file: a reader answered '$raw', which
+    is not an orientation from 1 to 8. Nothing has been written."
 		return 1
 	fi
 
-	printf '1'
+	il_warn "cannot read the orientation of $file, and this file carries Exif.
+    Resizing it without knowing how it is meant to be displayed can produce a
+    sideways image, so nothing has been written. --assume-upright resizes it as
+    it is stored instead."
+	return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -736,7 +854,7 @@ il_install_output() {
 # Called from either tool, before anything is validated, so it works with no
 # other arguments on the line.
 il_doctor() {
-	local format write read_ok failures=0 tmpdir
+	local format write read_ok failures=0 tmpdir jpeg_orientation png_orientation
 
 	if ! command -v vips >/dev/null 2>&1; then
 		printf '%s: libvips is not installed, so there is nothing to report.\n' \
@@ -767,19 +885,38 @@ il_doctor() {
 	printf '  cores          %s, all of them. libvips is already multithreaded, so\n' "$(il_core_count)"
 	printf '                 do not add xargs -P on top of these tools.\n'
 
-	if il_probe_orientation "$tmpdir"; then
-		printf '  orientation    vipsheader -f orientation answers on this build.\n'
+	# Both formats are probed and reported apart, because a build can answer
+	# for one and not the other, and that difference is the whole question here.
+	printf '  orientation    A file with no Exif carries no rotate-for-display\n'
+	printf '                 tag, so it is measured as stored and resized with\n'
+	printf '                 --no-rotate. vipsheader -f orientation is asked of a\n'
+	printf '                 file with no Exif, one format at a time, because a\n'
+	printf '                 build can answer for one and not the other, and a\n'
+	printf '                 screenshot is a png:\n'
+	if il_probe_orientation "$tmpdir" jpeg; then
+		jpeg_orientation='answers'
 	else
-		printf '  orientation    vipsheader -f orientation does not answer:\n'
-		printf '                   %s\n' "$IL_ORIENTATION_ERROR"
-		if command -v exiftool >/dev/null 2>&1; then
-			printf '                 exiftool is installed and will be used instead.\n'
-		else
-			printf '                 exiftool is not installed, so a rotate-for-display tag\n'
-			printf '                 cannot be read and a resize of a file carrying one will\n'
-			printf '                 be refused rather than guess.\n'
-		fi
+		jpeg_orientation="no: $IL_ORIENTATION_ERROR"
 	fi
+	if il_probe_orientation "$tmpdir" png; then
+		png_orientation='answers'
+	else
+		png_orientation="no: $IL_ORIENTATION_ERROR"
+	fi
+	printf '                   jpeg  %s\n' "$jpeg_orientation"
+	printf '                   png   %s\n' "$png_orientation"
+
+	if command -v exiftool >/dev/null 2>&1; then
+		printf '                 exiftool is installed and reads Exif when\n'
+		printf '                 vipsheader does not.\n'
+	else
+		printf '                 exiftool is not installed, so Exif that\n'
+		printf '                 vipsheader cannot read cannot be read at all.\n'
+	fi
+	printf '                 A file carrying Exif that neither can read is refused\n'
+	printf '                 rather than guessed at; --assume-upright resizes it as\n'
+	printf '                 it is stored.\n'
+
 	printf '\n'
 	printf '  format   read   write\n'
 

@@ -82,9 +82,14 @@ usage() {
 		the wrong axis and produce a sideways result. libvips applies the
 		rotation while it resizes, so the output is upright.
 
+		A screenshot carries no orientation tag at all, because there is nothing
+		to turn: that is settled from the file's own bytes rather than from a
+		reader, and such a file is resized as it is stored. Only a file that
+		does carry Exif which cannot be read is refused, because that is the
+		case where the answer is not obvious from looking at the file.
+
 		Supported formats: $(il_supported_formats). gif and tif are readable by
-		libvips and are refused here. An image whose Exif orientation cannot be
-		read is refused rather than resized blindly.
+		libvips and are refused here.
 
 		Batch is left to the shell:
 		  find . -name '*.jpg' -exec $batch
@@ -92,8 +97,22 @@ usage() {
 	$(il_help_options)
 	EOF
 
-	# A fixed-size wrapper has no size to offer, so it advertises neither the
-	# --size option nor the examples that need one.
+	# --size is the one option a wrapper has nothing to offer, so it is printed
+	# only when there is a size to choose. --assume-upright is printed either
+	# way: a wrapper is the tool people actually type, and an option its --help
+	# does not mention is an option nobody finds.
+	printf '\nResize options:\n'
+	if [[ -z $IL_PINNED ]]; then
+		printf '  --size <size>     The same size, as an option. Useful in a script.\n'
+	fi
+	cat <<-EOF
+		  --assume-upright  Resize a file whose Exif orientation cannot be read,
+		                   as though it carried no rotate-for-display tag. The
+		                   pixels are left as stored and the tag goes through
+		                   untouched, so a viewer still turns the result the
+		                   right way up.
+	EOF
+
 	if [[ -n $IL_PINNED ]]; then
 		cat <<-EOF
 
@@ -101,9 +120,6 @@ usage() {
 		EOF
 	else
 		cat <<-EOF
-
-			Tool-specific options:
-			  --size <size>     The same size, as an option. Useful in a script.
 
 			Examples:
 			  # The three fixed sizes
@@ -233,14 +249,44 @@ if ! WIDTH=$(read_header width) || ! HEIGHT=$(read_header height); then
 	il_fail "cannot read the dimensions of $INPUT with vipsheader"
 fi
 
+# The orientation and how it was settled come back as one string, because the
+# read happens in a command substitution and a variable set in there would be set
+# in the subshell and lost. Split here rather than in the library, so the decision
+# about what the two fields mean is made next to the decision about what to do
+# with them.
 ORIENTATION=''
-if ! ORIENTATION=$(il_orientation "$INPUT"); then
-	il_fail "refusing to resize $INPUT without an orientation. --doctor reports how
-    this build reads Exif orientation."
+IL_ORIENTATION_KIND=''
+if ORIENTATION=$(il_orientation "$INPUT" "$INPUT_FORMAT"); then
+	IL_ORIENTATION_KIND=${ORIENTATION%% *}
+	ORIENTATION=${ORIENTATION#* }
+	if [[ ! $ORIENTATION =~ ^[1-8]$ ]]; then
+		# Unreachable through il_orientation, which checks the range itself
+		# before printing. Checked here because this is the one place the value
+		# is used as a number, and a shell that read the field wrong would
+		# otherwise get `(( ORIENTATION >= 5 ))` on an empty string.
+		il_fail "unusable orientation for $INPUT: $ORIENTATION"
+	fi
+	elif (( IL_ASSUME_UPRIGHT )); then
+	ORIENTATION=1
+	IL_ORIENTATION_KIND='forced'
+else
+	# The library has already said why, on stderr. This is the consequence: a
+	# file with an orientation nobody can read is not resized at all.
+	il_fail "nothing has been written for $INPUT"
 fi
-if [[ ! $ORIENTATION =~ ^[1-8]$ ]]; then
-	il_fail "unusable Exif orientation for $INPUT: $ORIENTATION"
-fi
+
+# libvips applies the orientation itself while it resizes, which is what makes
+# the output upright without a second pass over the file. That is only true
+# while the two agree on what the orientation is, so where this script settled
+# it without a reader -- no Exif in the file, or --assume-upright standing in
+# for a tag nobody could read -- libvips is told not to rotate as well. An
+# assumption and an action cannot then come to different answers, and in the
+# second case the tag itself rides through untouched, so a viewer still turns the
+# pixels the right way up.
+NO_ROTATE=''
+case $IL_ORIENTATION_KIND in
+	none | forced) NO_ROTATE='--no-rotate' ;;
+esac
 
 # The dimensions the image has when it is displayed, which are not always the
 # dimensions it is stored with. Orientations 5 to 8 are the ones that turn by 90
@@ -298,11 +344,17 @@ if ! TMP=$(il_temp_path "${IL_DIR:-.}" "$IL_EXT"); then
 fi
 
 # thumbnail rather than resize: it brings JPEG shrink-on-load with it, so a
-# large JPEG is never fully decoded, and it applies the orientation itself.
+# large JPEG is never fully decoded, and it applies the orientation itself,
+# which is why --no-rotate above goes with the case where it must not.
 # --size force makes it hit exactly the dimensions computed above instead of
 # preserving the aspect ratio itself.
+#
+# $NO_ROTATE unquoted on purpose: it is one flag with no characters a glob or a
+# word split could do anything with, and quoting it would pass an empty string
+# to vips instead of leaving the argument out.
+# shellcheck disable=SC2086
 if ! reason=$(vips thumbnail "$INPUT" "$(il_save_name "$TMP" "$INPUT_FORMAT")" \
-	"$TARGET_W" --height "$TARGET_H" --size force 2>&1 >/dev/null); then
+	"$TARGET_W" --height "$TARGET_H" --size force $NO_ROTATE 2>&1 >/dev/null); then
 	rm -f -- "$TMP"
 	il_fail "vips could not resize $INPUT: $(il_first_line "$reason")"
 fi

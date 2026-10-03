@@ -62,7 +62,15 @@ construction and there is no format argument on the resize tools at all.
 
 Steps, in order:
 
-1. Read width, height and EXIF orientation from the input.
+1. Read width, height and EXIF orientation from the input. Whether there is Exif
+   to read is decided from the file's own bytes, not from a reader: libvips
+   carries the Exif slot on every image it loads, so asking it reports on the
+   image rather than on the tag, and an absent tag and an unreadable one come
+   back the same way. A file with no Exif carries no rotate-for-display tag and
+   is orientation 1 by definition, so a desktop screenshot is resized without any
+   reader being consulted. A file that *does* carry Exif goes to
+   `vipsheader -f orientation` and then to `exiftool`, and one that neither can
+   read is refused rather than guessed at.
 2. **Swap width and height for orientations 5–8.** A portrait photo is usually
    stored landscape with a rotate-for-display tag. Sizing against the stored
    dimensions constrains the wrong axis and produces a sideways result. This is the
@@ -76,11 +84,26 @@ Steps, in order:
    saver for the input's own format. `thumbnail` is the right operation because it
    brings JPEG shrink-on-load and applies orientation itself; `--size force` makes
    it hit exactly the dimensions computed in step 4.
+
+   `--no-rotate` is added wherever step 1 settled the orientation *without* a
+   reader — no Exif in the file, or `--assume-upright` over a tag nobody could
+   read. libvips applying the orientation is only correct while it and step 2
+   agree on what the orientation is, so where this tool decided the matter from
+   something else, libvips is told not to decide it a second time. An assumption
+   and an action then cannot come to different answers, which is what a sideways
+   result is.
 6. Write to a temporary file in the destination directory, `mv` into place only on
    success, then `touch -r` from the input so the output keeps the source's
    modification time and sorts with the originals.
 
 Metadata (EXIF, ICC) is carried through. There is no `--strip`.
+
+`--assume-upright` resizes a file whose Exif orientation cannot be read, as
+though it carried no rotate-for-display tag: the pixels are left as stored and the
+tag rides through untouched, so a viewer still turns the result the right way up.
+It exists because a tool that can only refuse leaves no way through, and it is a
+resize — never destructive — so the cost of getting it wrong is a look at the
+result. The strict behaviour is the default.
 
 ## Quality
 
@@ -104,6 +127,13 @@ and written, the core count, and — importantly — whether this build can actu
 can read AVIF without being able to write it, and that is not visible from the
 operation list. AVIF goes through libheif, and whether an AV1 encoder is present
 depends on how the package was built.
+
+It also probes the orientation read, **for a JPEG and for a PNG separately**. A
+build can answer `vipsheader -f orientation` for one and not the other, and the
+difference decides whether a screenshot resizes, because a screenshot is a PNG
+and a file with no Exif is settled from its own bytes. A doctor that only asked
+about JPEGs could not see a failure specific to the file people most often
+resize, which is how the refusal this probe exists to catch went unnoticed.
 
 ## Exit codes
 
@@ -148,6 +178,19 @@ Neither is checkable in an environment with no image tools installed:
 - `vipsheader -f orientation` for the orientation read. If a given build does not
   expose it, the fallback is `exiftool` — but a resize that silently ignores
   rotation is worse than one that refuses, so this needs confirming rather than
-  assuming.
+  assuming. Run `--doctor` on the target machine: it reports the answer for a JPEG
+  and for a PNG separately, which is the question that was previously unaskable.
+  What it cannot report is the behaviour this fix no longer depends on — whether
+  `vipsheader -f exif-data` distinguishes an absent tag from an unreadable one —
+  because the tools no longer ask it. On a build where it does not, the Exif in a
+  file is found in the file.
 - Whether the target libvips can write AVIF. `--doctor` performs a real encode
   rather than inspecting the operation list.
+
+## Test coverage
+
+`tests/cases/image.sh` covers the resize path with stand-ins for `vips`,
+`vipsheader` and `exiftool`, so libvips is not needed to run it. The case that
+matters most is the one that pins a screenshot: it fails against the dead Exif
+hatch, in which "there is Exif here that nobody could read" is what a file with
+no Exif at all looks like from libvips's side.

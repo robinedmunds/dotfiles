@@ -5,10 +5,10 @@
 ./tests/run.sh symlinks drift  # only case files matching these fragments
 ```
 
-Eight files cover `install.sh`. One covers `sync-timestamps.sh`; it is described under
-[The tool cases](#the-tool-cases) below, because it reaches the scripts a different way.
+Eight files cover `install.sh`. Two cover the tools in `home/.local/bin` — described under
+[The tool cases](#the-tool-cases) below, because they reach the scripts a different way.
 
-385 assertions in nine files, a few seconds. Plain bash and python3, no network.
+429 assertions in ten files, a few seconds. Plain bash and python3, no network.
 It also leans on `find -print0`, `sort -z`, `stat -c` and `date` -- all present in
 GNU coreutils/findutils and in BusyBox, which is the whole of what it asks for.
 
@@ -116,6 +116,40 @@ sandbox this user owns. `/proc/version` is the one file reliably present that th
 not own and cannot write. The case probes that first and **skips** rather than pretending to
 have run, in keeping with the rule above.
 
+`cases/image.sh` covers `img-resize.sh` and the three fixed-size wrappers, and one thing
+about it is worth knowing before adding to it.
+
+**libvips is stood in for, not installed.** What these tools do is decide what to ask
+libvips for — which orientation, which two target dimensions, whether to rotate — and that
+decision is worth testing precisely because it does not need libvips to be there. So each
+case builds a directory of stand-ins for `vips`, `vipsheader` and `exiftool`, puts it at the
+front of `PATH`, and puts `PATH` back at the end of the case. A case that leaked that
+directory would make every case after it test a fake, which is why the three are named
+explicitly rather than discovered: a case proving something is *not* consulted has to
+guarantee the thing it is proving the absence of was findable.
+
+**The stand-ins write down every call.** The fixtures are not real images, so each one
+carries a facts file beside it saying what a reader should say about it — including, for
+the cases that model a broken build, that a reader should say nothing. Because every call is
+recorded, "a screenshot is resized without a reader being consulted" is an assertion about
+calls that did not happen, which is the only way to test the fix that made screenshots work.
+
+Every decision in the orientation path is mutation-checked, with the checker at
+`/tmp/opencode/mutation-check-image.py`. Twelve mutations, all caught, and each by the case
+aimed at it rather than by whichever assertion happened to be standing nearby — the checker
+asserts the *expected* case failed, so a mutation caught by accident shows up as one caught
+for the wrong reason, and one of these was: a broken Exif search is caught by the refusal
+case, because a file whose Exif cannot be read would then be assumed upright.
+
+One of the twelve is there because it caught a real bug rather than a hypothetical one.
+`il_orientation` returns how the orientation was settled along with the value, in one
+string, and the caller splits it — which is only necessary because the read happens in
+`ORIENTATION=$(...)`, so a variable the library set would be set in the subshell and lost.
+The first version returned it as a variable, and the resize still came out upright for every
+case in the suite: there was no tag to apply in the first place, so losing the kind changed
+nothing visible except that `--no-rotate` went missing. A mutation that removes the printing
+of the kind fails one assertion.
+
 ## Layout
 
 | File | Covers |
@@ -132,6 +166,7 @@ have run, in keeping with the rule above.
 | `cases/dry-run.sh` | the promise that `--dry-run` changes nothing |
 | `cases/prompt.sh` | the question itself, and every answer to it |
 | `cases/timestamps.sh` | `sync-timestamps.sh`, run out of the Repository |
+| `cases/image.sh` | `img-resize.sh` and the three fixed-size wrappers |
 
 ## Adding a case
 
@@ -223,6 +258,19 @@ parser's unknown-flag or unwritable-log paths, because the `rename-*` tools have
 at all. Two cases were added for them before the checker was run.
 
 Its checker is at `/tmp/opencode/mutation-check-timestamps.py`, alongside the other.
+
+`cases/image.sh` is checked the same way, against twelve mutations of `image-lib.sh` and
+`img-resize.sh` — the dead Exif hatch restored, a format that keeps its rotation outside
+Exif taken on trust, a reader's answer believed whatever it is, the exiftool fallback
+deleted, the Exif byte search searching for nothing, an assumed orientation left for libvips
+to rotate on its own, the kind returned in a variable rather than in the string it is read
+through, the 90 degree swap dropped, `--assume-upright` accepted and ignored, the doctor
+probing a JPEG twice and never a PNG, and the way out of a refusal deleted from the doctor
+and from the help. All twelve caught. Two candidates were dropped before running, and why is
+the useful part: mutating `img-convert.sh` proves nothing about these cases, because nothing
+here runs it, and breaking the stand-ins themselves proves nothing about the tools under
+test, because a case would fail for a reason that has nothing to do with the decision it
+exists to check.
 
 ## Known behaviour pinned deliberately
 
