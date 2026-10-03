@@ -14,10 +14,12 @@ if command -v lsd >/dev/null 2>&1; then
   alias ls='lsd --color=auto'
   alias la='lsd --color=auto -A'
   alias ll='lsd --color=auto -l'
+  alias l='lsd --color=auto -l'
 else
   alias ls='ls --color=auto'
   alias la='ls --color=auto -A'
   alias ll='ls --color=auto -l'
+  alias l='ls --color=auto -l'
 fi
 
 alias grep='grep --color=auto'
