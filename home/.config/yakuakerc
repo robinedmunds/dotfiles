@@ -1,0 +1,6 @@
+[Appearance]
+BackgroundColorOpacity=90
+Translucency=true
+
+[Dialogs]
+FirstRun=false

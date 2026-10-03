@@ -1,0 +1,15 @@
+# https://ghostty.org/docs/config/reference
+
+background-opacity = 0.97
+bell-features = "no-audio"
+clipboard-paste-protection = true
+clipboard-read = allow
+clipboard-write = allow
+copy-on-select = true
+cursor-style = "block"
+cursor-style-blink = true
+font-family = "FiraCode Nerd Font"
+font-size = 14
+font-style = "medium"
+theme = "TokyoNight"
+title = "ghostty"

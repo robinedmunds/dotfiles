@@ -1,0 +1,8 @@
+# https://streamlink.github.io/cli.html#command-line-usage
+
+player-passthrough=hls
+default-stream=best
+
+player=mpv
+player-args=--saturation=-5 --volume=100 --mute --auto-window-resize=no
+webbrowser-executable=firefox
