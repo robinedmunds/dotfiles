@@ -1,0 +1,24 @@
+#
+# ~/.environ
+#
+# Environment variables shared by bash and zsh, so it has to stay portable:
+# plain `export NAME=value` lines that both shells read the same way. Anything
+# needing shell-specific syntax belongs in that shell's own rc instead.
+#
+# Sourced from ~/.bashrc and ~/.zshenv. zsh reads .zshenv for every shell,
+# interactive or not, which is why that is where the source line lives -- bash
+# has no equivalent file that every shell reads, so it goes in .bashrc and
+# non-interactive bash does without it.
+#
+# Nothing sensitive belongs in here. This file is a Managed File, so it is
+# committed to the Repository and installed into Home; secrets live in Home
+# only and never enter the Repository. See GLOSSARY.md.
+
+# Prepended, so a program in ~/bin or ~/.local/bin wins over a system binary
+# of the same name. This replaces an appended hardcoded
+# /home/robin/.local/bin, which pointed at the same ~/.local/bin but added
+# neither ~/bin nor /usr/local/bin, and made bash's PATH differ from zsh's.
+export PATH="$HOME/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
+
+export NO_DRKONQI=1
+export KWIN_IM_SHOW_ALWAYS=1  # always show virtual keyboard
