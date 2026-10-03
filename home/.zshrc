@@ -124,7 +124,7 @@ if [ -f "$HOME/.aliases" ]; then
   . "$HOME/.aliases"
 fi
 
-eval "$(starship init zsh)"eval "$(starship init zsh)"
+eval "$(starship init zsh)"
 if command -v tmux &> /dev/null && [ -z "$TMUX" ]; then
   tmux attach-session -t 1 || tmux new-session -s 1
 fi
