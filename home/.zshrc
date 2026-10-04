@@ -126,6 +126,15 @@ fi
 
 eval "$(starship init zsh)"
 if command -v tmux &> /dev/null && [ -z "$TMUX" ]; then
-  tmux attach-session -t 1 || tmux new-session -s 1
+  # Every terminal gets a session of its own, named with the lowest integer not
+  # already taken. Killing a session hands its number back to the next terminal.
+  tmux_session=1
+  # The = prefix means exact match. Without it tmux also accepts a name that
+  # merely starts with the number, so 1 would match a session called 12.
+  while tmux has-session -t "=$tmux_session" 2>/dev/null; do
+    tmux_session=$((tmux_session + 1))
+  done
+  tmux new-session -s "$tmux_session"
+  unset tmux_session
 fi
 
