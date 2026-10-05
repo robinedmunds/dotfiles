@@ -11,10 +11,10 @@
 
 # lsd fallback for ls, la, ll
 if command -v lsd >/dev/null 2>&1; then
-  alias ls='lsd --color=auto'
-  alias la='lsd --color=auto -A'
-  alias ll='lsd --color=auto -lA'
-  alias l='lsd --color=auto -la'
+  alias ls='lsd --color=auto --date=relative --sort-time'
+  alias la='lsd --color=auto --date=relative --sort-time -A'
+  alias ll='lsd --color=auto --date=relative --sort-time -lA'
+  alias l='lsd --color=auto --date=relative --sort-time -la'
 else
   alias ls='ls --color=auto -h'
   alias la='ls --color=auto -hA'
