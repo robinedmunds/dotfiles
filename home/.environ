@@ -23,7 +23,7 @@ export PATH="$HOME/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
 export NO_DRKONQI=1
 export KWIN_IM_SHOW_ALWAYS=1  # always show virtual keyboard
 
-# Proxy for download-videos.sh --proxy. An internal address rather than a
+# Proxy for the download-*.sh tools' --proxy. An internal address rather than a
 # secret, so it is committed with the rest of this file like PATH is: the flag
 # decides whether to use it, this says where it is. Without the flag no proxy
 # is used, whatever this holds.
