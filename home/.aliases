@@ -11,15 +11,15 @@
 
 # lsd fallback for ls, la, ll
 if command -v lsd >/dev/null 2>&1; then
-  alias ls='lsd --color=auto --date=relative --sort=time'
-  alias la='lsd --color=auto --date=relative --sort=time -A'
-  alias ll='lsd --color=auto --date=relative --sort=time -lA'
-  alias l='lsd --color=auto --date=relative --sort=time -la'
+  alias ls='lsd --color=auto --date=relative --group-directories-first --sort=extension'
+  alias la='lsd --color=auto --date=relative --group-directories-first --sort=extension -A'
+  alias ll='lsd --color=auto --date=locale --group-directories-first --sort=time -la'
+  alias l='lsd --color=auto --date=relative --group-directories-first --sort=time -lA'
 else
   alias ls='ls --color=auto -h'
   alias la='ls --color=auto -hA'
-  alias ll='ls --color=auto -hlA'
-  alias l='ls --color=auto -hla'
+  alias ll='ls --color=auto -hla'
+  alias l='ls --color=auto -hlA'
 fi
 
 alias grep='grep --color=auto'
