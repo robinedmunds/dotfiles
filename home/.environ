@@ -27,4 +27,4 @@ export KWIN_IM_SHOW_ALWAYS=1  # always show virtual keyboard
 # secret, so it is committed with the rest of this file like PATH is: the flag
 # decides whether to use it, this says where it is. Without the flag no proxy
 # is used, whatever this holds.
-export VPN_PROXY=http://10.65.141.170:8888
+export VPN_PROXY=http://vpn:8888
