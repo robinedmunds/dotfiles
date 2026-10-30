@@ -27,5 +27,5 @@ alias grep='grep --color=auto'
 alias update='flatpak update -y && sudo pacman -Syu --noconfirm && date --utc --rfc-3339=seconds >~/last-updated.txt'
 alias vpn='incus exec vpn --env LANG=en_GB.UTF-8 --env TERM=xterm-256color --env EDITOR=vim -- bash'
 alias qr='qrencode -t UTF8'
-alias opencode='podman run --rm -ti --secret OPENCODE_KEY --group-add keep-groups -v .:/home/ai/project opencode'
+alias opencode='podman run --rm -ti --secret OPENCODE_KEY --secret CONTEXT7_KEY --group-add keep-groups -v .:/home/ai/project opencode'
 
