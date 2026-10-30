@@ -4,6 +4,7 @@
 [core]
     whitespace = fix,-indent-with-non-tab,trailing-space,cr-at-eol
     excludesfile = ~/.gitignore
+    pager = delta
     # sshCommand = 'C:\\Windows\\System32\\OpenSSH\\ssh.exe'
 [color]
     ui = auto
