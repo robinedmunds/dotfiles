@@ -51,6 +51,7 @@
     path = ./themes.gitconfig
 [delta]
     dark = true
+    syntax-theme = Dracula
     hyperlinks = true
     line-numbers = true
     side-by-side = true
